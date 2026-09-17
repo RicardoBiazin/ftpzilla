@@ -12,6 +12,6 @@ necessario:
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Ricardo Biazin"
 __app__ = "FTPZilla"

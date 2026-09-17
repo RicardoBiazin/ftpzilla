@@ -77,9 +77,11 @@ def teste_janela_monta():
     try:
         j = JanelaPrincipal(root)
         root.update()
-        checar(j.esquerda is not None and j.direita is not None,
-               "a janela monta os dois paineis")
-        checar(j.esquerda.caminho not in ("", None),
+        aba = j.aba_atual()
+        checar(aba is not None and aba.esquerda is not None
+               and aba.direita is not None,
+               "a aba inicial monta os dois paineis")
+        checar(aba.esquerda.caminho not in ("", None),
                "o painel esquerdo abriu em alguma pasta")
         for nome in ("Claro", "Escuro"):
             j.var_tema.set(nome)
@@ -175,9 +177,92 @@ def teste_menu_contexto_seleciona_item_sob_cursor():
             pass
 
 
+def teste_formulario_vem_do_registro():
+    """Protocolo novo tem que aparecer no gerente de sites sozinho. Se este
+    teste quebrar ao registrar um backend, e porque alguem escreveu campo na
+    mao em vez de declara-lo no RemoteSpec."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla import remotes
+    from ftpzilla.sites import Site
+    from ftpzilla.ui import tema
+    from ftpzilla.ui.dialogos import FormularioSite
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        tema.aplicar(root, "Claro")
+        form = FormularioSite(root)
+        form.pack()
+        for kind in remotes.kinds():
+            if kind == "local":
+                continue
+            site = Site(kind=kind, nome="teste")
+            form.carregar(site)
+            root.update()
+            esperados = {c.key for c in remotes.campos(kind)}
+            checar(esperados.issubset(set(form._vars)),
+                   "o tipo %s teve todos os campos montados" % kind)
+
+        site = Site(kind="ftp", nome="x")
+        form.carregar(site)
+        form._vars["host"].set("servidor.exemplo")
+        form._vars["porta"].set("2121")
+        form._vars["senha"].set("nova-senha")
+        form.var_nome.set("Meu servidor")
+        form.aplicar()
+        igual(site.host, "servidor.exemplo", "o texto digitado volta para o Site")
+        igual(site.porta, 2121, "campo int vira int, e nao texto")
+        igual(site.nome, "Meu servidor", "o nome e aplicado")
+        igual(site.senha, "nova-senha", "a senha digitada e aplicada")
+    finally:
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+
+
+def teste_senha_protegida_nao_aparece_no_formulario():
+    """A caixa de senha mostra um marcador; nao mexer nela mantem a senha
+    gravada. Se o marcador fosse aplicado de volta, abrir e fechar o gerente
+    de sites trocaria a senha por oito bolinhas."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla import segredos
+    from ftpzilla.sites import Site
+    from ftpzilla.ui import tema
+    from ftpzilla.ui.dialogos import FormularioSite
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        tema.aplicar(root, "Claro")
+        protegida = segredos.proteger("senha original")
+        site = Site(kind="ftp", nome="x", host="h", senha=protegida)
+        form = FormularioSite(root)
+        form.pack()
+        form.carregar(site)
+        root.update()
+        mostrado = form._vars["senha"].get()
+        checar("senha original" not in mostrado and protegida not in mostrado,
+               "a senha gravada nao aparece na tela")
+        form.aplicar()
+        igual(site.senha, protegida,
+              "salvar sem tocar na senha mantem o valor protegido")
+    finally:
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+
+
 TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_janela_monta, teste_treeview_grande,
-          teste_menu_contexto_seleciona_item_sob_cursor]
+          teste_menu_contexto_seleciona_item_sob_cursor,
+          teste_formulario_vem_do_registro,
+          teste_senha_protegida_nao_aparece_no_formulario]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Fumaca da interface"))

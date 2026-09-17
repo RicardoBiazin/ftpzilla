@@ -12,6 +12,14 @@ import time
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 
+# as suites falam UTF-8; o console do Windows abre em cp1252 e derrubaria o
+# resumo inteiro por causa de um acento na saida de uma delas
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 SUITES = [
     ("teste_base.py", "Contratos da abstracao e do registro"),
     ("teste_local.py", "Disco local como Remote"),

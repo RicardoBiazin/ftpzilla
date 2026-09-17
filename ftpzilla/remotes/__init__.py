@@ -139,3 +139,4 @@ def rotulo(kind: str) -> str:
 
 # --- registros: no fim, porque os backends importam nomes deste modulo -----
 from . import local as _local        # noqa: E402,F401
+from . import ftp as _ftp            # noqa: E402,F401

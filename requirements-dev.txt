@@ -8,3 +8,8 @@ pyftpdlib==2.2.0
 
 pyinstaller==6.21.0
 # Gera o FTPZilla.exe.
+
+pyopenssl==26.4.0
+# O pyftpdlib so habilita o servidor FTPS quando o pyOpenSSL esta presente.
+# So o SERVIDOR de teste usa; o cliente FTPZilla usa o ssl da biblioteca
+# padrao e nao depende disto.

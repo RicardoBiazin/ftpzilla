@@ -16,6 +16,15 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if RAIZ not in sys.path:
     sys.path.insert(0, RAIZ)
 
+# O console do Windows abre em cp1252: imprimir um acento (ou o nome de um
+# arquivo com emoji, que e caso de teste legitimo aqui) derrubaria a suite
+# com UnicodeEncodeError e ninguem descobriria o que realmente falhou.
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 _contas = {"ok": 0, "falha": 0, "pulado": 0}
 
 

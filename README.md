@@ -21,7 +21,7 @@ E mais três que são ganho direto:
 Em construção, por marcos. Cada marco entrega algo que funciona de ponta a ponta e tem sua bateria de testes.
 
 - [x] **M1** — Base do projeto, abstração de acesso a arquivos, disco local, dois painéis navegáveis, temas.
-- [ ] **M2** — FTP e FTPS navegáveis, gerente de sites, credenciais protegidas.
+- [x] **M2** — FTP e FTPS navegáveis, gerente de sites, credenciais protegidas.
 - [ ] **M3** — Fila de transferências persistente.
 - [ ] **M4** — Retomada e repetição automática.
 - [ ] **M5** — SFTP.
