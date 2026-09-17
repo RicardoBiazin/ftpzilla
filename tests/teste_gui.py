@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 
 import ajuda
-from ajuda import checar, igual, pular, tem_display
+from ajuda import PastaTemp, checar, escrever, igual, pular, tem_display
 
 
 def _tk():
@@ -72,6 +72,13 @@ def teste_janela_monta():
         pular("sem display grafico")
     tk = _tk()
     from ftpzilla.ui.janela import JanelaPrincipal
+    # PastaTemp isola o FTPZILLA_HOME: sem isso o teste criaria fila.db e
+    # sites.json na configuracao real de quem esta rodando a suite
+    with PastaTemp():
+        _janela_monta(tk, JanelaPrincipal)
+
+
+def _janela_monta(tk, JanelaPrincipal):
     root = tk.Tk()
     root.withdraw()
     try:
@@ -88,6 +95,9 @@ def teste_janela_monta():
             j._trocar_tema()
             root.update()
         ajuda.ok("trocar de tema com a janela montada nao quebra")
+        checar(j.fila is not None and j.fila_view is not None,
+               "a fila global subiu junto com a janela")
+        j.fechar()
     finally:
         try:
             root.destroy()
@@ -177,6 +187,55 @@ def teste_menu_contexto_seleciona_item_sob_cursor():
             pass
 
 
+def teste_transferencia_pela_interface():
+    """Do clique ate o arquivo no destino, passando pela fila de verdade."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp() as tmp:
+        origem = os.path.join(tmp, "de")
+        destino = os.path.join(tmp, "para")
+        escrever(os.path.join(origem, "arquivo.bin"), b"k" * 30000)
+        os.makedirs(destino, exist_ok=True)
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            aba = j.aba_atual()
+            aba.esquerda.ir_para(origem.replace("\\", "/"))
+            aba.direita.ir_para(destino.replace("\\", "/"))
+            root.update()
+
+            selecionados = [e for e in aba.esquerda._itens
+                            if e.name == "arquivo.bin"]
+            igual(len(selecionados), 1, "o painel enxergou o arquivo")
+            j.transferir(aba.esquerda, selecionados)
+            root.update()
+            igual(len(j.fila.itens), 1, "o item entrou na fila")
+
+            fim = time.time() + 30
+            while time.time() < fim and not j.fila.esperar_vazia(0.2):
+                root.update()
+            chegou = os.path.join(destino, "arquivo.bin")
+            checar(os.path.exists(chegou), "o arquivo chegou no destino")
+            igual(os.path.getsize(chegou), 30000, "com o tamanho certo")
+
+            j.fila_view.redesenhar()
+            root.update()
+            igual(len(j.fila_view.tree.get_children()), 1,
+                  "a fila mostra a linha do item")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
 def teste_formulario_vem_do_registro():
     """Protocolo novo tem que aparecer no gerente de sites sozinho. Se este
     teste quebrar ao registrar um backend, e porque alguem escreveu campo na
@@ -261,6 +320,7 @@ def teste_senha_protegida_nao_aparece_no_formulario():
 TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_janela_monta, teste_treeview_grande,
           teste_menu_contexto_seleciona_item_sob_cursor,
+          teste_transferencia_pela_interface,
           teste_formulario_vem_do_registro,
           teste_senha_protegida_nao_aparece_no_formulario]
 

@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .. import __version__, log, remotes, segredos, util
+from ..fila import GerenciadorFila
+from ..fila_store import BAIXAR, ENVIAR
 from ..sites import GerenteSites, site_rapido
 from . import dialogos, tema
 from .aba import AbaLocal, AbaSite
+from .fila_view import FilaView
 
 TITULO = "FTPZilla %s" % __version__
 
@@ -65,6 +69,7 @@ class JanelaPrincipal(ttk.Frame):
         self._montar_barras()
         self._montar_corpo()
         self._ligar_log()
+        self._abrir_fila()
 
         self.nova_aba_local()
         self.logger.info("FTPZilla %s iniciado.", __version__)
@@ -184,6 +189,9 @@ class JanelaPrincipal(ttk.Frame):
 
         self.rodape = ttk.Notebook(self.vertical)
         self.vertical.add(self.rodape, weight=1)
+
+        self.quadro_fila = ttk.Frame(self.rodape)
+        self.rodape.add(self.quadro_fila, text="Fila")
 
         quadro_log = ttk.Frame(self.rodape)
         self.txt_log = tk.Text(quadro_log, height=8, wrap="none",
@@ -327,8 +335,46 @@ class JanelaPrincipal(ttk.Frame):
         aba = self.aba_atual()
         return aba.esquerda if aba is not None else None
 
+    # --- fila -------------------------------------------------------------
+    def _abrir_fila(self) -> None:
+        self.fila = GerenciadorFila(self.gerente, ao_mudar=self._fila_mudou)
+        self.fila.abrir()
+        self.fila_view = FilaView(self.quadro_fila, self.fila,
+                                  ao_status=self.status)
+        self.fila_view.pack(fill="both", expand=True)
+        self.after(250, self._tick_fila)
+
+    def _fila_mudou(self) -> None:
+        """Chamado das threads da fila: so levanta a bandeira.
+
+        Tocar em widget daqui seria tocar em Tk de outra thread, que e o
+        jeito classico de travar um programa Tkinter de forma irreproduzivel.
+        """
+        try:
+            self.fila_view.marcar_sujo()
+        except Exception:
+            pass
+
+    def _tick_fila(self) -> None:
+        """Barra de status global. Le o agregado, nunca item por item."""
+        if not self._vivo:
+            return
+        try:
+            r = self.fila.resumo()
+            if r["ativos"]:
+                self.pb.configure(value=r["pct"])
+                self.lb_taxa.configure(
+                    text="%s  %s restante" % (util.fmt_velocidade(r["velocidade"]),
+                                              util.fmt_tempo(r["eta"])))
+            else:
+                self.pb.configure(value=0)
+                self.lb_taxa.configure(text="")
+            self.after(250, self._tick_fila)
+        except tk.TclError:
+            self._vivo = False
+
     def transferir(self, origem, itens) -> None:
-        # M3 troca isto pela fila; por enquanto so informa o destino
+        """Manda a selecao de um painel para o outro, pela fila."""
         aba = self.aba_atual()
         if aba is None:
             return
@@ -336,11 +382,56 @@ class JanelaPrincipal(ttk.Frame):
         if destino is None:
             self.status("Conecte-se a um servidor para transferir.")
             return
-        nomes = ", ".join(e.name for e in itens[:3])
-        if len(itens) > 3:
-            nomes += " (+%d)" % (len(itens) - 3)
-        self.status("Transferir %s para %s (a fila chega no M3)."
-                    % (nomes, destino.caminho))
+
+        remoto_origem = origem.nav.remote
+        remoto_destino = destino.nav.remote
+        sentido = ENVIAR if remoto_origem.is_local else BAIXAR
+        site = getattr(aba, "site", None)
+        pasta_destino = destino.caminho
+        caminhos = [remoto_origem.juntar(origem.caminho, e.name) for e in itens]
+        tem_pasta = any(e.is_dir for e in itens)
+
+        if not tem_pasta:
+            pares = [(remoto_origem.juntar(origem.caminho, e.name),
+                      remoto_destino.juntar(pasta_destino, e.name),
+                      e.size, e.mtime) for e in itens]
+            self._enfileirar(site, sentido, pares)
+            return
+
+        # ha pasta na selecao: percorrer pode demorar, entao vai para uma
+        # thread e a janela continua respondendo
+        self.status("Lendo as pastas selecionadas...")
+
+        def trabalhar():
+            try:
+                if remoto_origem.is_local:
+                    leitor, fechar = remoto_origem, False
+                else:
+                    leitor, fechar = remotes.make_remote(site.revelado()), True
+                    leitor.conectar()
+                try:
+                    pares = self.fila.expandir(leitor, sentido, caminhos,
+                                               pasta_destino, remoto_destino)
+                finally:
+                    if fechar:
+                        leitor.fechar()
+            except Exception as e:      # noqa: BLE001
+                self.after(0, lambda: self.status("Nao deu para ler a pasta: %s"
+                                                  % e))
+                return
+            self.after(0, lambda: self._enfileirar(site, sentido, pares))
+
+        threading.Thread(target=trabalhar, name="expandir", daemon=True).start()
+
+    def _enfileirar(self, site, sentido: str, pares) -> None:
+        if not pares:
+            self.status("Nada para transferir.")
+            return
+        itens = self.fila.montar_itens(site, sentido, pares)
+        self.fila.enfileirar(itens)
+        self.fila_view.marcar_sujo()
+        self.rodape.select(self.quadro_fila)
+        self.status("%d arquivo(s) na fila." % len(itens))
 
     def status_painel(self, titulo: str, texto: str) -> None:
         self.status(texto)
@@ -354,6 +445,7 @@ class JanelaPrincipal(ttk.Frame):
         self._cores_log()
         for aba in self._abas:
             aba.retema()
+        self.fila_view.retema()
         tema.pintar_classico(self.root)
 
     def _sobre(self) -> None:
@@ -373,6 +465,12 @@ class JanelaPrincipal(ttk.Frame):
                 aba.fechar()
             except Exception:
                 pass
+        try:
+            # fecha a fila ANTES da janela: as threads precisam gravar o
+            # progresso no banco, e e isso que permite retomar depois
+            self.fila.fechar()
+        except Exception:
+            pass
         try:
             self.root.destroy()
         except tk.TclError:
