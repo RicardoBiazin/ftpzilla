@@ -24,6 +24,9 @@ from ..sites import GerenteSites, site_rapido
 from . import dialogos, tema
 from .ponte import Ponte
 from .aba import AbaLocal, AbaSite
+from ..editor import EditorRemoto
+from . import dnd
+from .busca_view import BuscaDialog
 from .fila_view import FilaView
 from .sincronizar import SincronizarDialog, comparar_nos_paineis
 
@@ -68,6 +71,8 @@ class JanelaPrincipal(ttk.Frame):
         self.pack(fill="both", expand=True)
         # unica via de volta das threads de trabalho para a interface
         self.ponte = Ponte(self)
+        self.editor = EditorRemoto(ao_modificar=self._editor_salvou,
+                                   ao_status=self._status_de_thread)
         self._montar_menu()
         self._montar_status()      # antes do corpo, de proposito
         self._montar_barras()
@@ -128,6 +133,8 @@ class JanelaPrincipal(ttk.Frame):
                            command=self.comparar_pastas)
         m_fila.add_command(label="Sincronizar pastas...",
                            command=self.sincronizar)
+        m_fila.add_command(label="Procurar no servidor...",
+                           accelerator="Ctrl+F", command=self.procurar)
         m_fila.add_separator()
         m_limite = tk.Menu(m_fila, tearoff=0)
         self.var_limite = tk.IntVar(value=0)
@@ -139,6 +146,13 @@ class JanelaPrincipal(ttk.Frame):
                                      command=self._aplicar_limite)
         m_fila.add_cascade(label="Limite de banda", menu=m_limite)
         barra.add_cascade(label="Transferir", menu=m_fila)
+
+        self.m_favoritos = tk.Menu(barra, tearoff=0)
+        self.m_favoritos.add_command(label="Guardar a pasta atual",
+                                     command=self.favoritar_atual)
+        self.m_favoritos.add_separator()
+        barra.add_cascade(label="Favoritos", menu=self.m_favoritos)
+        self._recarregar_favoritos()
 
         m_exibir = tk.Menu(barra, tearoff=0)
         self.var_tema = tk.StringVar(value=self.tema_nome)
@@ -163,6 +177,7 @@ class JanelaPrincipal(ttk.Frame):
         self.root.bind_all("<Control-n>", lambda e: self._foco().nova_pasta())
         self.root.bind_all("<F5>", lambda e: self._foco().recarregar())
         self.root.bind_all("<Control-d>", lambda e: self.comparar_pastas())
+        self.root.bind_all("<Control-f>", lambda e: self.procurar())
 
     def _montar_status(self) -> None:
         barra = ttk.Frame(self, padding=(6, 3))
@@ -375,6 +390,221 @@ class JanelaPrincipal(ttk.Frame):
         self.fila_view.pack(fill="both", expand=True)
         self.after(250, self._tick_fila)
 
+    # --- acoes que os paineis oferecem ------------------------------------
+    def acoes_de_painel(self):
+        """Entradas de menu que so a janela sabe executar.
+
+        O FilePane recebe esta lista e nao precisa conhecer a janela: e o
+        que permite o mesmo widget servir disco e servidor.
+        """
+        return [
+            ("Editar no servidor", self._editar, True),
+            ("Baixar para...", self._baixar_para, True),
+            ("Guardar nos favoritos", self.favoritar, False),
+            ("Procurar aqui...", self.procurar, False),
+        ]
+
+    def _status_de_thread(self, texto: str) -> None:
+        self.ponte.chamar(lambda: self.status(texto))
+
+    def _editar(self, painel) -> None:
+        """Baixa o arquivo, abre no editor do sistema e vigia o salvamento."""
+        selecionados = [e for e in painel.selecionados() if not e.is_dir]
+        if not selecionados:
+            return
+        remoto = painel.nav.remote
+        if remoto.is_local:
+            for e in selecionados:
+                EditorRemoto._abrir_no_editor(
+                    remoto.nativo(remoto.juntar(painel.caminho, e.name)))
+            return
+
+        aba = self.aba_atual()
+        site = getattr(aba, "site", None)
+        if site is None:
+            self.status("Este painel nao tem um servidor associado.")
+            return
+        caminhos = [remoto.juntar(painel.caminho, e.name) for e in selecionados]
+
+        def trabalhar():
+            conexao = None
+            try:
+                # conexao propria: a de navegacao nao pode ficar ocupada
+                conexao = remotes.make_remote(site.revelado())
+                conexao.conectar()
+                for c in caminhos:
+                    self.editor.abrir(conexao, site, c)
+            except Exception as e:      # noqa: BLE001
+                self._status_de_thread("Nao deu para abrir: %s" % e)
+            finally:
+                if conexao is not None:
+                    try:
+                        conexao.fechar()
+                    except Exception:
+                        pass
+
+        self.status("Baixando para edicao...")
+        threading.Thread(target=trabalhar, name="editar", daemon=True).start()
+
+    def _editor_salvou(self, aberto) -> None:
+        """O arquivo aberto no editor foi salvo: reenviar.
+
+        Chamado da thread do vigia, entao a unica coisa que pode acontecer
+        aqui e agendar o trabalho na thread da interface.
+        """
+        def enfileirar():
+            import os as _os
+            site = self.fila._site(aberto.site_id)
+            if site is None:
+                self.status("O servidor de %s nao esta mais disponivel."
+                            % aberto.nome)
+                return
+            try:
+                tamanho = _os.path.getsize(aberto.caminho_local)
+            except OSError:
+                return
+            self._enfileirar(site, ENVIAR,
+                             [(aberto.caminho_local.replace("\\", "/"),
+                               aberto.caminho_remoto, tamanho, 0)])
+            self.editor.confirmar_envio(aberto.caminho_local)
+
+        self.ponte.chamar(enfileirar)
+
+    def _baixar_para(self, painel) -> None:
+        """Substitui o arrastar para fora da janela, que o Tkinter nao faz."""
+        from tkinter import filedialog
+        itens = [e for e in painel.selecionados() if not e.is_dir]
+        if not itens:
+            return
+        pasta = filedialog.askdirectory(parent=self,
+                                        title="Baixar para qual pasta?")
+        if not pasta:
+            return
+        aba = self.aba_atual()
+        remoto = painel.nav.remote
+        destino = pasta.replace("\\", "/")
+        sentido = ENVIAR if remoto.is_local else BAIXAR
+        site = getattr(aba, "site", None) if sentido == BAIXAR else None
+        pares = [(remoto.juntar(painel.caminho, e.name),
+                  destino + "/" + e.name, e.size, e.mtime) for e in itens]
+        self._enfileirar(site, sentido, pares)
+
+    # --- favoritos --------------------------------------------------------
+    def favoritar_atual(self) -> None:
+        painel = self._foco()
+        if painel is not None:
+            self.favoritar(painel)
+
+    def favoritar(self, painel) -> None:
+        aba = self.aba_atual()
+        site = getattr(aba, "site", None)
+        if painel.nav.remote.is_local or site is None:
+            alvo = self.gerente.extras.setdefault("favoritos_locais", [])
+        else:
+            alvo = site.opcoes.setdefault("favoritos", [])
+        if painel.caminho not in alvo:
+            alvo.append(painel.caminho)
+            self.salvar_sites()
+        self._recarregar_favoritos()
+        self.status("Guardado nos favoritos: %s" % painel.caminho)
+
+    def _recarregar_favoritos(self) -> None:
+        menu = self.m_favoritos
+        menu.delete(2, "end")
+        vazio = True
+        for caminho in self.gerente.extras.get("favoritos_locais", []):
+            menu.add_command(label="Local: %s" % util.elidir(caminho, 50),
+                             command=lambda c=caminho: self._ir_favorito(c, None))
+            vazio = False
+        for site in self.gerente:
+            for caminho in (site.opcoes.get("favoritos") or []):
+                menu.add_command(
+                    label="%s: %s" % (site.nome, util.elidir(caminho, 40)),
+                    command=lambda c=caminho, s=site: self._ir_favorito(c, s))
+                vazio = False
+        if vazio:
+            menu.add_command(label="(nenhum ainda)", state="disabled")
+
+    def _ir_favorito(self, caminho: str, site) -> None:
+        aba = self.aba_atual()
+        if site is None:
+            aba.esquerda.ir_para(caminho)
+            return
+        atual = getattr(aba, "site", None)
+        if atual is not None and atual.id == site.id and aba.direita is not None:
+            aba.direita.ir_para(caminho)
+        else:
+            site.pasta_remota = caminho
+            self.abrir_site(site)
+
+    # --- busca ------------------------------------------------------------
+    def procurar(self, painel=None) -> None:
+        aba = self.aba_atual()
+        site = getattr(aba, "site", None)
+        if painel is None:
+            painel = aba.direita if aba is not None else None
+        if site is None or painel is None or painel.nav.remote.is_local:
+            self.status("A busca recursiva e para o painel do servidor.")
+            return
+        BuscaDialog(self.root, self, painel, site)
+
+    # --- arrastar ---------------------------------------------------------
+    def ligar_arrastar(self, aba) -> None:
+        """Arrasto entre paineis e, quando houver tkinterdnd2, do Explorer."""
+        for painel in (aba.esquerda, aba.direita):
+            if painel is None or getattr(painel, "_arrasto_ligado", False):
+                continue
+            painel._arrasto_ligado = True
+            dnd.ArrastoInterno(
+                painel.tree,
+                obter_itens=painel.selecionados,
+                ao_soltar=lambda alvo, itens, p=painel: self._soltou(p, alvo,
+                                                                     itens))
+            dnd.registrar_alvo(
+                painel.tree,
+                lambda caminhos, p=painel: self._soltou_do_sistema(p, caminhos))
+
+    def _soltou(self, origem, alvo_widget, itens) -> None:
+        """Soltou dentro da janela: no outro painel, ou na fila."""
+        aba = self.aba_atual()
+        if aba is None or not itens:
+            return
+        caminho_alvo = str(alvo_widget)
+        for painel in (aba.esquerda, aba.direita):
+            if painel is None or painel is origem:
+                continue
+            if caminho_alvo.startswith(str(painel)):
+                self.transferir(origem, itens)
+                return
+        if caminho_alvo.startswith(str(self.fila_view)):
+            self.transferir(origem, itens)
+
+    def _soltou_do_sistema(self, painel, caminhos) -> None:
+        """Arquivos arrastados do Explorer: sobem para o painel do servidor."""
+        import os as _os
+        aba = self.aba_atual()
+        if aba is None or aba.direita is None or aba.direita.nav.remote.is_local:
+            self.status("Conecte-se a um servidor para soltar arquivos nele.")
+            return
+        remoto = aba.direita.nav.remote
+        pares = []
+        for caminho in caminhos:
+            if _os.path.isdir(caminho):
+                continue      # pasta inteira exige varredura: use o menu
+            try:
+                tamanho = _os.path.getsize(caminho)
+                quando = _os.path.getmtime(caminho)
+            except OSError:
+                continue
+            pares.append((caminho.replace("\\", "/"),
+                          remoto.juntar(aba.direita.caminho,
+                                        _os.path.basename(caminho)),
+                          tamanho, quando))
+        if pares:
+            self._enfileirar(getattr(aba, "site", None), ENVIAR, pares)
+        else:
+            self.status("Solte arquivos; pastas inteiras, pelo menu.")
+
     # --- comparacao -------------------------------------------------------
     def _dois_paineis(self):
         aba = self.aba_atual()
@@ -524,6 +754,10 @@ class JanelaPrincipal(ttk.Frame):
             except Exception:
                 pass
         try:
+            self.editor.fechar()
+        except Exception:
+            pass
+        try:
             # fecha a fila ANTES da janela: as threads precisam gravar o
             # progresso no banco, e e isso que permite retomar depois
             self.fila.fechar()
@@ -536,6 +770,8 @@ class JanelaPrincipal(ttk.Frame):
 
 
 def abrir(tema_nome: str = tema.PADRAO) -> None:
-    root = tk.Tk()
+    # a raiz precisa ser decidida antes de qualquer widget existir: o
+    # tkinterdnd2 exige a classe dele na propria raiz
+    root = dnd.criar_raiz()
     JanelaPrincipal(root, tema_nome)
     root.mainloop()

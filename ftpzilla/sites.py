@@ -136,7 +136,10 @@ class GerenteSites:
     def __init__(self, caminho: str = ""):
         self.caminho = caminho or paths.arquivo_sites()
         self.sites: List[Site] = []
-        self.ordem_colunas: Dict = {}
+        #: guarda-chuva para o que nao pertence a um site (favoritos de
+        #: pastas locais, por exemplo). Fica no mesmo arquivo para o usuario
+        #: ter um unico lugar para levar embora ou versionar.
+        self.extras: Dict = {}
 
     # --- disco ------------------------------------------------------------
     def carregar(self) -> "GerenteSites":
@@ -149,6 +152,7 @@ class GerenteSites:
         except (OSError, ValueError) as e:
             logger.error("Nao foi possivel ler %s: %s", self.caminho, e)
             return self
+        self.extras = dict(dados.get("extras") or {})
         conhecidos = _atributos()
         for bruto in dados.get("sites", []):
             limpo = {k: v for k, v in bruto.items() if k in conhecidos}
@@ -161,7 +165,8 @@ class GerenteSites:
 
     def salvar(self) -> None:
         """Grava de forma atomica, com os segredos protegidos."""
-        saida = {"versao": 1, "sites": [self._para_json(s) for s in self.sites]}
+        saida = {"versao": 1, "extras": self.extras,
+                 "sites": [self._para_json(s) for s in self.sites]}
         tmp = self.caminho + ".tmp"
         os.makedirs(os.path.dirname(self.caminho) or ".", exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:

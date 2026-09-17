@@ -43,11 +43,13 @@ class AbaLocal(ttk.Frame):
         self.esquerda = FilePane(divisor, NavegadorLocal(LocalRemote()),
                                  titulo="Local",
                                  ao_transferir=janela.transferir,
-                                 ao_status=janela.status_painel)
+                                 ao_status=janela.status_painel,
+                                 acoes_extras=janela.acoes_de_painel())
         self.direita = FilePane(divisor, NavegadorLocal(LocalRemote()),
                                 titulo="Local",
                                 ao_transferir=janela.transferir,
-                                ao_status=janela.status_painel)
+                                ao_status=janela.status_painel,
+                                acoes_extras=janela.acoes_de_painel())
         divisor.add(self.esquerda, weight=1)
         divisor.add(self.direita, weight=1)
 
@@ -80,7 +82,8 @@ class AbaSite(ttk.Frame):
         self.esquerda = FilePane(divisor, NavegadorLocal(LocalRemote()),
                                  titulo="Local",
                                  ao_transferir=janela.transferir,
-                                 ao_status=janela.status_painel)
+                                 ao_status=janela.status_painel,
+                                 acoes_extras=janela.acoes_de_painel())
         divisor.add(self.esquerda, weight=1)
 
         self.quadro_remoto = ttk.Frame(divisor)
@@ -115,9 +118,11 @@ class AbaSite(ttk.Frame):
             self.direita = FilePane(self.quadro_remoto, self.worker,
                                     titulo=self.site.nome,
                                     ao_transferir=self.janela.transferir,
-                                    ao_status=self.janela.status_painel)
+                                    ao_status=self.janela.status_painel,
+                                    acoes_extras=self.janela.acoes_de_painel())
             self.direita.pack(fill="both", expand=True)
         self.direita.ir_para(self.worker.remote.home())
+        self.janela.ligar_arrastar(self)
         remote = self.worker.remote
         logger.info("Conectado em %s (%s). Retomada: %s. Data preservada: %s.",
                     self.site.host, remotes.rotulo(self.site.kind),

@@ -44,7 +44,8 @@ class FilePane(ttk.Frame):
                  ao_mudar_pasta: Optional[Callable] = None,
                  ao_transferir: Optional[Callable] = None,
                  ao_status: Optional[Callable] = None,
-                 ao_erro: Optional[Callable] = None):
+                 ao_erro: Optional[Callable] = None,
+                 acoes_extras: Optional[List] = None):
         super().__init__(master, padding=(4, 4))
         self.nav = navegador
         self.titulo = titulo
@@ -52,6 +53,10 @@ class FilePane(ttk.Frame):
         self.ao_transferir = ao_transferir
         self.ao_status = ao_status
         self.ao_erro = ao_erro
+        # [(rotulo, funcao(painel), precisa_selecao)] - a janela acrescenta
+        # aqui o que depende dela (editar no servidor, favoritos, procurar),
+        # e o painel continua sem conhecer a janela
+        self.acoes_extras = list(acoes_extras or [])
 
         self.caminho = "/"
         self._itens: List[Entry] = []          # listagem crua, sem filtro
@@ -134,6 +139,11 @@ class FilePane(ttk.Frame):
         self.menu.add_separator()
         self.menu.add_command(label="Copiar caminho", command=self.copiar_caminho)
         self.menu.add_command(label="Atualizar", command=self.recarregar)
+        if self.acoes_extras:
+            self.menu.add_separator()
+            for rotulo, funcao, _precisa in self.acoes_extras:
+                self.menu.add_command(label=rotulo,
+                                      command=lambda f=funcao: f(self))
 
     def _ligar_teclas(self) -> None:
         self.tree.bind("<Double-1>", self._duplo_clique)
@@ -329,7 +339,9 @@ class FilePane(ttk.Frame):
         if iid:
             self.tree.focus(iid)
         tem = bool(self.selecionados())
-        for rotulo in ("Abrir", "Transferir", "Renomear...", "Apagar"):
+        desabilitaveis = ["Abrir", "Transferir", "Renomear...", "Apagar"]
+        desabilitaveis += [r for r, _f, precisa in self.acoes_extras if precisa]
+        for rotulo in desabilitaveis:
             self.menu.entryconfigure(rotulo, state="normal" if tem else "disabled")
         try:
             self.menu.tk_popup(evento.x_root, evento.y_root)
