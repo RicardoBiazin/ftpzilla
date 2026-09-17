@@ -25,7 +25,7 @@ Em construção, por marcos. Cada marco entrega algo que funciona de ponta a pon
 - [x] **M3** — Fila de transferências persistente.
 - [x] **M4** — Retomada e repetição automática.
 - [x] **M5** — SFTP.
-- [ ] **M6** — Download segmentado.
+- [x] **M6** — Download segmentado.
 - [ ] **M7** — Comparação e sincronização de pastas.
 - [ ] **M8** — Abas, favoritos, busca remota, editor remoto.
 - [ ] **M9** — Google Drive e OneDrive.
@@ -71,6 +71,23 @@ python tests\teste_local.py      # uma suíte só
 ```
 
 Os testes de FTP e SFTP sobem o servidor dentro do próprio processo (`pyftpdlib` e `paramiko`), então não dependem de nenhum servidor externo no ar. Instale as dependências de teste com `pip install -r requirements-dev.txt`.
+
+## Sobre o download em várias conexões
+
+Um arquivo grande pode ser baixado em até quatro conexões simultâneas, cada uma pegando uma faixa do arquivo. Isso ajuda **em um caso específico**: servidor que limita a banda *por conexão* — o que é comum em hospedagem compartilhada. Aí a diferença é entre usar 20% e 100% do seu link.
+
+Fora desse caso, segmentar **não** ajuda, e pode atrapalhar. Por isso o FTPZilla só segmenta quando todas estas condições valem:
+
+- é download (envio segmentado não é confiável em FTP, e o ganho em SFTP não paga o risco);
+- o servidor aceita retomada por faixa (`REST STREAM` no FTP, `seek` no SFTP);
+- o arquivo tem pelo menos 64 MB — abrir uma conexão FTPS custa de 0,3 a 1 segundo, o que engole o ganho em arquivo pequeno;
+- há conexão sobrando no pool e **ninguém esperando na fila** — senão segmentar apenas rouba conexão de outro arquivo, e o total não melhora;
+- o destino é um arquivo local comum;
+- não é Google Drive nem OneDrive, onde o gargalo é a cota de requisições e mais paralelismo só aproxima o erro 429.
+
+Medindo em rede local ou contra `localhost` você **não vai ver diferença** — não há o que contornar ali. O ganho aparece contra servidor remoto com limite por conexão.
+
+O arquivo é pré-alocado no disco e cada conexão escreve na sua faixa; ao terminar, o resultado é conferido (hash quando o servidor sabe calcular, tamanho quando não sabe) antes de virar o arquivo final.
 
 ## Limites conhecidos
 

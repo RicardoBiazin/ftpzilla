@@ -448,6 +448,22 @@ class GerenciadorFila:
         suja = False
         try:
             remoto = pool.pegar()
+            plano = self._plano_segmentado(item, pool, remoto)
+            if plano:
+                # devolve esta conexao ANTES de comecar: as faixas pegam as
+                # suas do pool, e devolver aqui evita que a mesma conexao
+                # seja devolvida duas vezes se algo falhar la dentro
+                pool.devolver(remoto)
+                remoto = None
+                faixas, feitos = plano
+                logger.info("Baixando %s em %d conexoes paralelas.",
+                            item.nome, len(faixas))
+                transfer.baixar_segmentado(
+                    item, pool, faixas, medidor=item.medidor,
+                    cancelar=item.cancelar, store=self.store,
+                    limitador=self.limitador, feitos=feitos)
+                self._terminou(item)
+                return
             local = LocalRemote()
             origem, destino = ((remoto, local) if item.sentido == BAIXAR
                                else (local, remoto))
@@ -469,6 +485,54 @@ class GerenciadorFila:
             item.cancelar = None
             self._acordar.set()
             self._avisar()
+
+    def _plano_segmentado(self, item: ItemFila, pool, remoto):
+        """(faixas, feitos) quando vale baixar em paralelo; None quando nao.
+
+        A decisao precisa da conexao ja aberta: so depois do FEAT se sabe se
+        o servidor aceita faixa.
+        """
+        if item.sentido != BAIXAR or pool is self._pool_local:
+            return None
+        tamanho = item.tamanho
+        if tamanho < 0:
+            info = remoto.stat(item.origem)
+            tamanho = info.size if info else -1
+            item.tamanho = tamanho
+        with self._lock:
+            esperando = sum(1 for i in self.itens if i.estado == ESPERANDO)
+        faixas = transfer.plano_segmentos(tamanho, remoto,
+                                          livres=pool.livres,
+                                          esperando=esperando)
+        if not faixas:
+            return None
+
+        feitos = self._segmentos_reaproveitaveis(item, faixas, tamanho)
+        if feitos is None:
+            self.store.gravar_segmentos(item.id, faixas)
+            feitos = [0] * len(faixas)
+        return faixas, feitos
+
+    def _segmentos_reaproveitaveis(self, item: ItemFila, faixas, tamanho: int):
+        """O que ja foi baixado de cada faixa numa tentativa anterior.
+
+        Devolve None quando nao da para confiar no que esta no disco - o
+        parcial tem que existir, ter exatamente o tamanho final (ele e
+        pre-alocado) e as faixas gravadas tem que ser as mesmas de agora.
+        """
+        from .remotes.local import PARCIAL
+        parcial = LocalRemote().nativo(item.destino) + PARCIAL
+        if not os.path.exists(parcial) or os.path.getsize(parcial) != tamanho:
+            return None
+        gravados = self.store.segmentos(item.id)
+        if len(gravados) != len(faixas):
+            return None
+        for g, (ini, fim) in zip(gravados, faixas):
+            if g["ini"] != ini or g["fim"] != fim:
+                return None
+            if not (0 <= g["feito"] <= fim - ini + 1):
+                return None
+        return [g["feito"] for g in gravados]
 
     def _terminou(self, item: ItemFila) -> None:
         with self._lock:

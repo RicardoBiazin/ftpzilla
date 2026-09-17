@@ -112,6 +112,25 @@ class JanelaPrincipal(ttk.Frame):
                             command=lambda: self._foco().subir())
         barra.add_cascade(label="Pasta", menu=m_pasta)
 
+        m_fila = tk.Menu(barra, tearoff=0)
+        m_fila.add_command(label="Pausar a fila",
+                           command=lambda: self.fila.pausar_tudo())
+        m_fila.add_command(label="Retomar a fila",
+                           command=lambda: self.fila.retomar_tudo())
+        m_fila.add_command(label="Tentar de novo os que falharam",
+                           command=lambda: self.fila.tentar_de_novo())
+        m_fila.add_separator()
+        m_limite = tk.Menu(m_fila, tearoff=0)
+        self.var_limite = tk.IntVar(value=0)
+        for kbs, rotulo in ((0, "Sem limite"), (128, "128 KB/s"),
+                            (512, "512 KB/s"), (1024, "1 MB/s"),
+                            (5120, "5 MB/s")):
+            m_limite.add_radiobutton(label=rotulo, value=kbs,
+                                     variable=self.var_limite,
+                                     command=self._aplicar_limite)
+        m_fila.add_cascade(label="Limite de banda", menu=m_limite)
+        barra.add_cascade(label="Transferir", menu=m_fila)
+
         m_exibir = tk.Menu(barra, tearoff=0)
         self.var_tema = tk.StringVar(value=self.tema_nome)
         for nome in tema.THEMES:
@@ -343,6 +362,12 @@ class JanelaPrincipal(ttk.Frame):
                                   ao_status=self.status)
         self.fila_view.pack(fill="both", expand=True)
         self.after(250, self._tick_fila)
+
+    def _aplicar_limite(self) -> None:
+        kbs = self.var_limite.get()
+        self.fila.definir_limite(kbs)
+        self.status("Limite de banda: %s."
+                    % ("sem limite" if not kbs else util.fmt_velocidade(kbs * 1024)))
 
     def _fila_mudou(self) -> None:
         """Chamado das threads da fila: so levanta a bandeira.

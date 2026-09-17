@@ -21,6 +21,7 @@ import queue
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from . import log
@@ -388,6 +389,176 @@ def _entre_servidores(item, origem: Remote, destino: Remote, medidor,
     if medidor is not None:
         medidor.terminar()
     return Resultado(movidos, 0)
+
+
+# ---------------------------------------------------------------------------
+# Download segmentado
+# ---------------------------------------------------------------------------
+#: abaixo disto, segmentar custa mais do que rende
+LIMIAR_SEGMENTO = 64 * 1024 * 1024
+#: cada segmento precisa valer a pena sozinho
+SEGMENTO_MINIMO = 16 * 1024 * 1024
+MAX_SEGMENTOS = 4
+
+
+def plano_segmentos(tamanho: int, remote: Remote, *, livres: int = 0,
+                    esperando: int = 0, destino_local: bool = True,
+                    limiar: int = LIMIAR_SEGMENTO,
+                    maximo: int = MAX_SEGMENTOS) -> list:
+    """Divide (ou nao) um download em faixas paralelas.
+
+    Segmentar e a diferenca entre usar 20% e 100% do link em servidor que
+    limita a banda POR CONEXAO - e e tambem um jeito facil de deixar o
+    programa MAIS LENTO que o FileZilla se for feito sem criterio. Por isso
+    as guardas abaixo sao todas obrigatorias:
+
+    - so download, e so para arquivo local comum. Upload segmentado nao
+      existe de forma confiavel em FTP, e em SFTP o ganho e pequeno diante
+      do risco de montar o arquivo errado;
+    - o servidor precisa aceitar faixa (REST STREAM no FTP, seek no SFTP);
+    - arquivo pequeno nao compensa: abrir uma conexao FTP com TLS custa de
+      0,3 a 1 segundo, o que engole o ganho;
+    - tem que haver conexao sobrando. Segmentar com gente esperando na fila
+      e roubar conexao de quem ia transferir outro arquivo - o total nao
+      melhora, so muda de dono;
+    - nuvem nunca: o gargalo la e a cota de requisicoes, e mais pedidos
+      paralelos so aproximam o 429.
+
+    Devolve [] quando nao vale a pena, ou a lista de (inicio, fim) inclusivo.
+    """
+    if tamanho < limiar:
+        return []
+    if not getattr(remote, "segmentavel", False):
+        return []
+    if not destino_local:
+        return []
+    if getattr(remote, "is_local", False):
+        return []           # ler o mesmo disco em paralelo so atrapalha
+    if esperando > 0:
+        return []
+    if livres < 1:
+        return []
+
+    n = min(maximo, livres + 1, max(1, tamanho // SEGMENTO_MINIMO),
+            max(1, getattr(remote, "max_conexoes", 1)))
+    if n < 2:
+        return []
+
+    passo = tamanho // n
+    faixas = []
+    inicio = 0
+    for i in range(n):
+        fim = tamanho - 1 if i == n - 1 else inicio + passo - 1
+        faixas.append((inicio, fim))
+        inicio = fim + 1
+    return faixas
+
+
+def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
+                      store=None, limitador=None, feitos=None) -> Resultado:
+    """Baixa um arquivo em varias conexoes, cada uma com sua faixa.
+
+    O arquivo local e pre-alocado com o tamanho final e cada thread escreve
+    no proprio intervalo, com seu proprio descritor. Nao ha trecho comum,
+    entao nao ha lock no caminho quente.
+
+    'feitos' e o quanto de cada faixa ja foi baixado numa tentativa anterior
+    (vem da tabela de segmentos), que e o que permite retomar um download
+    segmentado sem recomecar as quatro faixas.
+    """
+    local = LocalRemote()
+    alvo = local.nativo(item.destino)
+    parcial = alvo + PARCIAL
+    feitos = list(feitos or [0] * len(faixas))
+    total = faixas[-1][1] + 1
+
+    os.makedirs(os.path.dirname(alvo) or ".", exist_ok=True)
+    # pre-aloca: cada thread escreve na propria faixa sem esperar as outras
+    with open(parcial, "r+b" if os.path.exists(parcial) else "wb") as f:
+        f.truncate(total)
+
+    if medidor is not None:
+        medidor.comecar(total=total, feitos=sum(feitos))
+
+    erros = []
+    travas = threading.Lock()
+
+    def um_segmento(indice: int) -> None:
+        ini, fim = faixas[indice]
+        ja = feitos[indice]
+        restante = (fim - ini + 1) - ja
+        if restante <= 0:
+            return
+        remoto = None
+        suja = False
+        try:
+            remoto = pool.pegar()
+            with open(parcial, "r+b") as f:
+                f.seek(ini + ja)
+                contador = [ja]
+
+                def cb(n: int) -> None:
+                    if limitador is not None:
+                        limitador.consumir(n)
+                    if medidor is not None:
+                        medidor.bloco(n)
+                    contador[0] += n
+                    if store is not None and item.id:
+                        store.segmento_feito(item.id, indice, contador[0])
+
+                remoto.baixar(item.origem, f, offset=ini + ja,
+                              limite=restante, cb=cb, cancelar=cancelar)
+                with travas:
+                    feitos[indice] = contador[0]
+            suja = True     # leitura por faixa sempre deixa a conexao suja
+        except BaseException as e:      # noqa: BLE001
+            suja = True
+            with travas:
+                erros.append(e)
+        finally:
+            if remoto is not None:
+                pool.devolver(remoto, suja=suja)
+
+    with ThreadPoolExecutor(max_workers=len(faixas),
+                            thread_name_prefix="segmento") as executor:
+        list(executor.map(um_segmento, range(len(faixas))))
+
+    if erros:
+        item.bytes_feitos = sum(feitos)
+        raise erros[0]
+
+    os.replace(parcial, alvo)
+    item.bytes_feitos = total
+
+    ok, detalhe = _verificar(pool, item, alvo, total)
+    if not ok:
+        try:
+            os.remove(alvo)
+        except OSError:
+            pass
+        item.bytes_feitos = 0
+        if store is not None and item.id:
+            store.gravar_segmentos(item.id, [])
+        raise ErroPermanente("Verificacao falhou: %s." % detalhe)
+
+    if store is not None and item.id:
+        store.gravar_segmentos(item.id, [])   # o item terminou; limpa as faixas
+    if medidor is not None:
+        medidor.terminar()
+    return Resultado(total, 0)
+
+
+def _verificar(pool, item, alvo: str, tamanho: int):
+    """Confere o arquivo montado, usando uma conexao emprestada do pool."""
+    remoto = None
+    try:
+        remoto = pool.pegar()
+        return conferir_integridade(remoto, item.origem, alvo, tamanho)
+    except ErroRemoto:
+        return True, "nao deu para verificar (sem conexao livre)"
+    finally:
+        if remoto is not None:
+            pool.devolver(remoto)
 
 
 def conferir_integridade(origem: Remote, caminho_remoto: str,
