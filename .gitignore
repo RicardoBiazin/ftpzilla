@@ -1,0 +1,47 @@
+# --- build ----------------------------------------------------------------
+build/
+dist/
+*.spec
+*.zip
+*.exe
+
+# --- dados de execucao ----------------------------------------------------
+logs/
+_dados/
+*.db
+*.db-wal
+*.db-shm
+sites.json
+preferencias.json
+known_hosts
+
+# --- segredos -------------------------------------------------------------
+# Nada aqui e paranoia: o cliente guarda credencial de servidor, chave SSH e
+# token OAuth. Um unico arquivo destes commitado por engano entrega acesso a
+# um servidor de producao, e o historico do git nao esquece.
+client_secret*.json
+credentials*.json
+*token*.json
+*.pem
+*.key
+*.ppk
+*.pfx
+*.p12
+.env
+.env.*
+!.env.example
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# --- editores / SO --------------------------------------------------------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

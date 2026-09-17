@@ -1,0 +1,32 @@
+# Dependencias do FTPZilla, com versao exata.
+#
+# Por que exata e nao ">=": o scanner de vulnerabilidade (OSV) nao consegue
+# resolver faixa aberta - ele so sabe dizer se a versao instalada tem CVE
+# quando ela esta escrita aqui. Faixa aberta tambem faz a compilacao de hoje
+# ser diferente da de amanha sem ninguem mexer em nada.
+#
+# Confira com: pip install -r requirements.txt
+
+# --- obrigatorio ----------------------------------------------------------
+paramiko==5.0.0
+# SFTP. A partir da 3.x existe PKey.from_path(), que abre RSA, Ed25519 e
+# ECDSA sem o programa ter que adivinhar o tipo da chave - adivinhar quebra
+# com as chaves modernas que o ssh-keygen gera por padrao hoje.
+# prefetch()/set_pipelined() daqui sao o ganho real de velocidade em link
+# com latencia (a diferenca e de alguns MB/s para dezenas).
+
+cryptography==50.0.1
+# Vem junto com o paramiko; fixada aqui de proposito para a auditoria
+# enxergar a versao. Tambem e o que gera o certificado autoassinado usado
+# nos testes de FTPS.
+
+# --- opcional (o app roda sem, com menos recurso) -------------------------
+requests==2.33.1
+# So para Google Drive e OneDrive: sessao HTTP com retry do urllib3.
+# Sem ele, os tipos de nuvem aparecem na interface com o aviso de
+# "instale requests" em vez de quebrar no meio de um envio.
+
+tkinterdnd2==0.4.3
+# So para arrastar arquivos do Explorer para dentro da janela. O arrastar
+# de painel para painel e feito em Tkinter puro e continua funcionando sem
+# este pacote.

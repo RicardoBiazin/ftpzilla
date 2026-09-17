@@ -1,0 +1,10 @@
+# Só para desenvolver, testar e empacotar - nao entra no executavel.
+-r requirements.txt
+
+pyftpdlib==2.2.0
+# Servidor FTP/FTPS dentro do proprio processo de teste. E o que permite
+# testar MLSD, FEAT, REST, MFMT e reuso de sessao TLS sem depender de um
+# servidor externo no ar.
+
+pyinstaller==6.21.0
+# Gera o FTPZilla.exe.
