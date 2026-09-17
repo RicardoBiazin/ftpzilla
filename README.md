@@ -24,7 +24,7 @@ Em construção, por marcos. Cada marco entrega algo que funciona de ponta a pon
 - [x] **M2** — FTP e FTPS navegáveis, gerente de sites, credenciais protegidas.
 - [x] **M3** — Fila de transferências persistente.
 - [x] **M4** — Retomada e repetição automática.
-- [ ] **M5** — SFTP.
+- [x] **M5** — SFTP.
 - [ ] **M6** — Download segmentado.
 - [ ] **M7** — Comparação e sincronização de pastas.
 - [ ] **M8** — Abas, favoritos, busca remota, editor remoto.
