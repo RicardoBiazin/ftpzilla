@@ -285,6 +285,18 @@ class Remote:
         """Escreve origem_fobj em 'caminho'. Devolve bytes enviados."""
         raise NotImplementedError
 
+    # --- integridade ------------------------------------------------------
+    def hash_remoto(self, caminho: str, algoritmo: str = "md5"):
+        """Hash calculado PELO SERVIDOR, ou None se ele nao souber fazer.
+
+        Quando existe, e a unica forma honesta de provar que o arquivo que
+        chegou e o mesmo que saiu - conferir tamanho nao detecta bytes
+        trocados de lugar, que e justamente o defeito de uma retomada errada.
+        Nem todo servidor tem, e por isso o retorno pode ser None sem que
+        nada esteja errado.
+        """
+        return None
+
     # --- auxiliares para os backends --------------------------------------
     @staticmethod
     def _passo(cb, n: int, cancelar) -> None:

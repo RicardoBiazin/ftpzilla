@@ -554,6 +554,33 @@ class FtpRemote(Remote):
                 pass
         return super().stat(caminho)
 
+    def hash_remoto(self, caminho: str, algoritmo: str = "md5"):
+        """XMD5/MD5/XCRC, quando o servidor oferecer.
+
+        Sao extensoes nao padronizadas, mas comuns em ProFTPD e servidores de
+        hospedagem, e valem muito: com elas da para PROVAR que o arquivo
+        baixado e igual ao do servidor, em vez de so comparar tamanho.
+        """
+        texto = " ".join(self._feat)
+        caminho = self.normalizar(caminho)
+        tentativas = []
+        if algoritmo == "md5":
+            if "XMD5" in texto:
+                tentativas.append(("XMD5", "md5"))
+            if "MD5" in texto:
+                tentativas.append(("MD5", "md5"))
+        if "XCRC" in texto:
+            tentativas.append(("XCRC", "crc32"))
+        for comando, nome in tentativas:
+            try:
+                resposta = self.ftp.sendcmd('%s "%s"' % (comando, caminho))
+            except ftplib.all_errors:
+                continue
+            valor = resposta.split()[-1].strip().strip('"').lower()
+            if valor and all(c in "0123456789abcdef" for c in valor):
+                return (nome, valor)
+        return None
+
     def tamanho(self, caminho: str) -> int:
         """SIZE do arquivo, -1 se o servidor nao souber responder."""
         try:

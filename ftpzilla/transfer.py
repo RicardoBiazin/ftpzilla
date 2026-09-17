@@ -268,6 +268,19 @@ def _baixar(item, origem: Remote, destino: Remote, medidor, cancelar, store,
         raise
 
     os.replace(parcial, alvo)
+
+    ok, detalhe = conferir_integridade(origem, item.origem, alvo, tamanho)
+    if not ok:
+        # o arquivo errado nao pode ficar no lugar do certo: apaga e deixa o
+        # item falhar, para uma nova tentativa comecar do zero
+        try:
+            os.remove(alvo)
+        except OSError:
+            pass
+        item.bytes_feitos = 0
+        raise ErroPermanente("Verificacao falhou: %s." % detalhe)
+    logger.debug("%s: %s", item.nome, detalhe)
+
     if info.mtime:
         try:
             local.definir_mtime(item.destino, info.mtime)
@@ -375,6 +388,50 @@ def _entre_servidores(item, origem: Remote, destino: Remote, medidor,
     if medidor is not None:
         medidor.terminar()
     return Resultado(movidos, 0)
+
+
+def conferir_integridade(origem: Remote, caminho_remoto: str,
+                         caminho_local: str, tamanho_esperado: int = -1):
+    """Prova que o que chegou e o que saiu, quando da para provar.
+
+    Conferir tamanho nao detecta bytes trocados de lugar - e esse justamente
+    o defeito de uma retomada mal feita. Quando o servidor sabe calcular o
+    hash do arquivo dele (XMD5/MD5/XCRC), o hash e comparado. Quando nao
+    sabe, sobra o tamanho, e isso e dito com todas as letras em vez de
+    fingir que o arquivo foi verificado.
+
+    Devolve (ok: bool, descricao: str).
+    """
+    real = os.path.getsize(caminho_local)
+    if tamanho_esperado >= 0 and real != tamanho_esperado:
+        return False, ("o arquivo local tem %d bytes e o servidor informou %d"
+                       % (real, tamanho_esperado))
+    try:
+        remoto = origem.hash_remoto(caminho_remoto)
+    except Exception:       # noqa: BLE001 - verificacao nunca derruba o item
+        remoto = None
+    if not remoto:
+        return True, "tamanho conferido (o servidor nao calcula hash)"
+
+    import binascii
+    import hashlib
+    algoritmo, valor = remoto
+    if algoritmo == "md5":
+        h = hashlib.md5()
+        with open(caminho_local, "rb") as f:
+            for bloco in iter(lambda: f.read(1 << 20), b""):
+                h.update(bloco)
+        local = h.hexdigest()
+    else:
+        crc = 0
+        with open(caminho_local, "rb") as f:
+            for bloco in iter(lambda: f.read(1 << 20), b""):
+                crc = binascii.crc32(bloco, crc)
+        local = "%08x" % (crc & 0xFFFFFFFF)
+    if local.lower() != valor.lower():
+        return False, ("o %s do arquivo baixado nao bate com o do servidor"
+                       % algoritmo.upper())
+    return True, "%s conferido com o servidor" % algoritmo.upper()
 
 
 def descrever_erro(exc: BaseException) -> str:

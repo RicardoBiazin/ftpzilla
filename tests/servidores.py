@@ -81,12 +81,16 @@ def cert_autoassinado(pasta: str) -> str:
 @contextlib.contextmanager
 def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
                  sem_rest: bool = False, sem_mlsd: bool = False,
-                 cortar_em: int = 0, certificado: str = ""):
+                 cortar_em: int = 0, cortes: int = 0, certificado: str = ""):
     """Sobe um servidor FTP sobre 'raiz'. Devolve (host, porta).
 
     cortar_em > 0 faz a leitura de qualquer arquivo falhar depois de N bytes,
     simulando a queda de conexao no meio de uma transferencia grande - e como
     se testa a retomada sem depender de sorte.
+
+    cortes limita quantas vezes isso acontece (0 = sempre). Com cortes=1, a
+    primeira tentativa cai e a segunda tem de terminar o arquivo - que e o
+    cenario real de "a conexao caiu uma vez".
     """
     from pyftpdlib.authorizers import DummyAuthorizer
     from pyftpdlib.filesystems import AbstractedFS
@@ -110,10 +114,14 @@ def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
         def __getattr__(self, nome):
             return getattr(self._f, nome)
 
+    restantes = {"cortes": cortes if cortes else -1}
+
     class FS(AbstractedFS):
         def open(self, filename, mode):
             f = super().open(filename, mode)
-            if cortar_em and "r" in mode:
+            if cortar_em and "r" in mode and restantes["cortes"] != 0:
+                if restantes["cortes"] > 0:
+                    restantes["cortes"] -= 1
                 return _Cortado(f, cortar_em)
             return f
 
