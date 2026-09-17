@@ -141,3 +141,5 @@ def rotulo(kind: str) -> str:
 from . import local as _local        # noqa: E402,F401
 from . import ftp as _ftp            # noqa: E402,F401
 from . import sftp as _sftp          # noqa: E402,F401
+from . import gdrive as _gdrive      # noqa: E402,F401
+from . import onedrive as _onedrive  # noqa: E402,F401

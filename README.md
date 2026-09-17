@@ -28,7 +28,7 @@ Em construção, por marcos. Cada marco entrega algo que funciona de ponta a pon
 - [x] **M6** — Download segmentado.
 - [x] **M7** — Comparação e sincronização de pastas.
 - [x] **M8** — Abas, favoritos, busca remota, editor remoto.
-- [ ] **M9** — Google Drive e OneDrive.
+- [x] **M9** — Google Drive e OneDrive.
 - [ ] **M10** — Executável e empacotamento.
 
 ## Como rodar

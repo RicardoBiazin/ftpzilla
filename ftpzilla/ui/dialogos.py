@@ -7,6 +7,7 @@ manteve o gerente de sites do mesmo tamanho com dois protocolos e com sete.
 """
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional
@@ -148,6 +149,18 @@ class FormularioSite(ttk.Frame):
                              values=[r for _, r in campo.opcoes],
                              state="readonly", width=campo.width)
             w._valor_por_rotulo = {r: v for v, r in campo.opcoes}
+        elif campo.kind == "oauth":
+            # o token nunca aparece na tela: o que se mostra e se a conta
+            # esta conectada, e o botao refaz a autorizacao no navegador
+            var = tk.StringVar(value=str(valor or ""))
+            w = ttk.Frame(self.quadro)
+            estado = ttk.Label(w, style="Fraco.TLabel",
+                               text=("conta conectada" if valor
+                                     else "nenhuma conta conectada"))
+            estado.pack(side="left", padx=(0, 8))
+            ttk.Button(w, text="Conectar...", width=12,
+                       command=lambda v=var, c=campo, l=estado:
+                       self._conectar_oauth(v, c, l)).pack(side="left")
         elif campo.kind in ("file", "dir"):
             var = tk.StringVar(value=str(valor or ""))
             w = ttk.Frame(self.quadro)
@@ -162,6 +175,55 @@ class FormularioSite(ttk.Frame):
         self._vars[campo.key] = var
         self._widgets.append(w)
         return w
+
+    def _conectar_oauth(self, var: tk.StringVar, campo, rotulo) -> None:
+        """Abre o navegador para autorizar e guarda o refresh token.
+
+        Roda numa thread porque o fluxo espera a pessoa clicar no navegador -
+        pode levar minutos, e a janela nao pode congelar nesse tempo.
+        """
+        from .. import oauth
+
+        self.aplicar()
+        site = self.site
+        cliente = str(site.get("client_id", "") or "").strip()
+        if not cliente:
+            messagebox.showwarning(
+                "Conectar",
+                "Informe antes o ID do aplicativo.\n\n%s"
+                % oauth.provedor(campo.provedor).ajuda, parent=self)
+            return
+        segredo = str(site.get("client_secret", "") or "")
+        tenant = str(site.get("tenant", "") or "common")
+        rotulo.configure(text="esperando o navegador...")
+
+        resposta = {}
+
+        def trabalhar():
+            try:
+                resposta["tokens"] = oauth.autorizar(
+                    campo.provedor, cliente, segredo, tenant)
+            except BaseException as e:      # noqa: BLE001
+                resposta["erro"] = e
+
+        threading.Thread(target=trabalhar, name="oauth", daemon=True).start()
+
+        def conferir():
+            if not resposta:
+                self.after(200, conferir)
+                return
+            if "erro" in resposta:
+                rotulo.configure(text="nao conectou")
+                messagebox.showerror("Conectar", str(resposta["erro"]),
+                                     parent=self)
+                return
+            var.set(resposta["tokens"]["refresh_token"])
+            site.set(campo.key, var.get())
+            rotulo.configure(text="conta conectada")
+            messagebox.showinfo("Conectar", "Conta conectada com sucesso.",
+                                parent=self)
+
+        conferir()
 
     def _escolher(self, var: tk.StringVar, kind: str) -> None:
         if kind == "dir":
