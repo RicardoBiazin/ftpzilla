@@ -102,7 +102,10 @@ class AbaSite(ttk.Frame):
         except RuntimeError as e:      # dependencia faltando
             self._falhou(e)
             return
-        self.worker = BrowserWorker(remote, self.after,
+        # a ponte da janela, e nao self.after: o BrowserWorker responde de
+        # outra thread, e tocar em Tk de la e o jeito classico de a resposta
+        # simplesmente nunca chegar
+        self.worker = BrowserWorker(remote, self.janela.ponte,
                                     nome="browser-%s" % self.site.nome)
         self.worker.conectar(ok=self._conectou, erro=self._falhou)
 

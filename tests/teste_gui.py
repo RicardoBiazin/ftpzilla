@@ -236,6 +236,180 @@ def teste_transferencia_pela_interface():
                 pass
 
 
+def teste_sincronizar_pela_interface():
+    """Analisar, ver a lista, desmarcar e executar - com dois discos locais."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from ftpzilla.ui.janela import JanelaPrincipal
+    from ftpzilla.ui.sincronizar import SincronizarDialog
+
+    with PastaTemp() as tmp:
+        esq = os.path.join(tmp, "esq")
+        dir_ = os.path.join(tmp, "dir")
+        escrever(os.path.join(esq, "novo.txt"), b"conteudo novo")
+        escrever(os.path.join(esq, "outro.txt"), b"outro")
+        escrever(os.path.join(esq, "igual.txt"), b"identico")
+        escrever(os.path.join(dir_, "igual.txt"), b"identico")
+        agora = time.time() - 100
+        for lado in (esq, dir_):
+            os.utime(os.path.join(lado, "igual.txt"), (agora, agora))
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            aba = j.aba_atual()
+            aba.esquerda.ir_para(esq.replace("\\", "/"))
+            aba.direita.ir_para(dir_.replace("\\", "/"))
+            root.update()
+
+            dlg = SincronizarDialog(root, j, aba.esquerda, aba.direita, None)
+            dlg.analisar()
+            fim = time.time() + 20
+            while time.time() < fim and not dlg.acoes:
+                root.update()
+                time.sleep(0.02)
+            checar(bool(dlg.acoes), "a analise encontrou diferencas")
+            enviar = [a for a in dlg.acoes if a["acao"] == "enviar"]
+            igual(len(enviar), 2,
+                  "os dois arquivos que so existem de um lado entraram")
+            checar(all(a["par"].rel != "igual.txt" for a in dlg.acoes),
+                   "o arquivo identico ficou de fora do plano")
+
+            # desmarca o primeiro: ele nao pode ser transferido
+            dlg.tree.selection_set("0")
+            dlg.alternar()
+            igual(len(dlg._marcados), len(dlg.acoes) - 1,
+                  "desmarcar tira a acao da execucao")
+
+            dlg.executar()
+            fim = time.time() + 30
+            while time.time() < fim and not j.fila.esperar_vazia(0.2):
+                root.update()
+            copiados = sorted(os.listdir(dir_))
+            igual(len(copiados), 2,
+                  "so o item marcado foi copiado (%s)" % copiados)
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def teste_comparacao_pinta_os_paineis():
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from ftpzilla.ui.janela import JanelaPrincipal
+    from ftpzilla.ui.sincronizar import comparar_nos_paineis
+
+    with PastaTemp() as tmp:
+        esq = os.path.join(tmp, "esq")
+        dir_ = os.path.join(tmp, "dir")
+        escrever(os.path.join(esq, "so_aqui.txt"), b"a")
+        escrever(os.path.join(dir_, "so_la.txt"), b"b")
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            aba = j.aba_atual()
+            aba.esquerda.ir_para(esq.replace("\\", "/"))
+            aba.direita.ir_para(dir_.replace("\\", "/"))
+            root.update()
+
+            comparar_nos_paineis(j, aba.esquerda, aba.direita)
+            fim = time.time() + 20
+            while time.time() < fim and not aba.esquerda._comparacao:
+                root.update()
+                time.sleep(0.02)
+            igual(aba.esquerda._comparacao.get("so_aqui.txt"), "so_esquerda",
+                  "o arquivo que so existe aqui foi marcado")
+            igual(aba.esquerda._comparacao.get("so_la.txt"), "so_direita",
+                  "e o que so existe la tambem")
+            tags = aba.esquerda.tree.item("i0", "tags")
+            checar(bool(tags), "a linha recebeu a tag de cor (%s)" % (tags,))
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def teste_aba_de_servidor_de_ponta_a_ponta():
+    """Conectar, listar e baixar de um FTP de verdade, pela janela.
+
+    E o teste que prova a ponte entre a thread do BrowserWorker e a do
+    Tkinter: se ela falhar, a listagem simplesmente nunca aparece, sem erro
+    nenhum no log - foi assim que o bug apareceu aqui.
+    """
+    if not tem_display():
+        pular("sem display grafico")
+    import servidores
+    if not servidores.tem_pyftpdlib():
+        pular("pyftpdlib nao instalado")
+    tk = _tk()
+    import os
+    from ftpzilla.sites import Site
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp() as tmp:
+        raiz = os.path.join(tmp, "servidor")
+        escrever(os.path.join(raiz, "remoto.txt"), b"vim do servidor")
+        os.makedirs(os.path.join(raiz, "pasta"), exist_ok=True)
+        baixar = os.path.join(tmp, "baixados")
+        os.makedirs(baixar, exist_ok=True)
+
+        with servidores.servidor_ftp(raiz) as (host, porta):
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                j = JanelaPrincipal(root)
+                site = Site(nome="Servidor de teste", kind="ftp", host=host,
+                            porta=porta, usuario=servidores.USUARIO,
+                            senha=servidores.SENHA, tls_modo="nenhum")
+                j.abrir_site(site)
+                aba = j.aba_atual()
+
+                fim = time.time() + 30
+                while time.time() < fim and aba.direita is None:
+                    root.update()
+                    time.sleep(0.02)
+                checar(aba.direita is not None, "a aba conectou no servidor")
+
+                fim = time.time() + 30
+                while time.time() < fim and not aba.direita._itens:
+                    root.update()
+                    time.sleep(0.02)
+                nomes = sorted(e.name for e in aba.direita._itens)
+                igual(nomes, ["pasta", "remoto.txt"],
+                      "a listagem do servidor chegou na interface")
+
+                aba.esquerda.ir_para(baixar.replace("\\", "/"))
+                root.update()
+                alvos = [e for e in aba.direita._itens
+                         if e.name == "remoto.txt"]
+                j.transferir(aba.direita, alvos)
+                root.update()
+                fim = time.time() + 30
+                while time.time() < fim and not j.fila.esperar_vazia(0.2):
+                    root.update()
+                chegou = os.path.join(baixar, "remoto.txt")
+                checar(os.path.exists(chegou),
+                       "o arquivo baixado do servidor chegou no disco")
+                j.fechar()
+            finally:
+                try:
+                    root.destroy()
+                except tk.TclError:
+                    pass
+
+
 def teste_formulario_vem_do_registro():
     """Protocolo novo tem que aparecer no gerente de sites sozinho. Se este
     teste quebrar ao registrar um backend, e porque alguem escreveu campo na
@@ -321,6 +495,9 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_janela_monta, teste_treeview_grande,
           teste_menu_contexto_seleciona_item_sob_cursor,
           teste_transferencia_pela_interface,
+          teste_sincronizar_pela_interface,
+          teste_comparacao_pinta_os_paineis,
+          teste_aba_de_servidor_de_ponta_a_ponta,
           teste_formulario_vem_do_registro,
           teste_senha_protegida_nao_aparece_no_formulario]
 

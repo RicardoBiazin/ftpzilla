@@ -22,8 +22,10 @@ from ..fila import GerenciadorFila
 from ..fila_store import BAIXAR, ENVIAR
 from ..sites import GerenteSites, site_rapido
 from . import dialogos, tema
+from .ponte import Ponte
 from .aba import AbaLocal, AbaSite
 from .fila_view import FilaView
+from .sincronizar import SincronizarDialog, comparar_nos_paineis
 
 TITULO = "FTPZilla %s" % __version__
 
@@ -64,6 +66,8 @@ class JanelaPrincipal(ttk.Frame):
         tema.aplicar(root, tema_nome)
 
         self.pack(fill="both", expand=True)
+        # unica via de volta das threads de trabalho para a interface
+        self.ponte = Ponte(self)
         self._montar_menu()
         self._montar_status()      # antes do corpo, de proposito
         self._montar_barras()
@@ -120,6 +124,11 @@ class JanelaPrincipal(ttk.Frame):
         m_fila.add_command(label="Tentar de novo os que falharam",
                            command=lambda: self.fila.tentar_de_novo())
         m_fila.add_separator()
+        m_fila.add_command(label="Comparar esta pasta", accelerator="Ctrl+D",
+                           command=self.comparar_pastas)
+        m_fila.add_command(label="Sincronizar pastas...",
+                           command=self.sincronizar)
+        m_fila.add_separator()
         m_limite = tk.Menu(m_fila, tearoff=0)
         self.var_limite = tk.IntVar(value=0)
         for kbs, rotulo in ((0, "Sem limite"), (128, "128 KB/s"),
@@ -153,6 +162,7 @@ class JanelaPrincipal(ttk.Frame):
         self.root.bind_all("<Control-w>", lambda e: self.fechar_aba())
         self.root.bind_all("<Control-n>", lambda e: self._foco().nova_pasta())
         self.root.bind_all("<F5>", lambda e: self._foco().recarregar())
+        self.root.bind_all("<Control-d>", lambda e: self.comparar_pastas())
 
     def _montar_status(self) -> None:
         barra = ttk.Frame(self, padding=(6, 3))
@@ -232,6 +242,8 @@ class JanelaPrincipal(ttk.Frame):
         self._abas.append(aba)
 
     def abrir_site(self, site) -> None:
+        # a fila precisa achar este site mesmo que ele nunca seja salvo
+        self.fila.registrar_site(site)
         aba = AbaSite(self.abas, self, site)
         self.abas.add(aba, text=site.nome)
         self.abas.select(aba)
@@ -363,6 +375,26 @@ class JanelaPrincipal(ttk.Frame):
         self.fila_view.pack(fill="both", expand=True)
         self.after(250, self._tick_fila)
 
+    # --- comparacao -------------------------------------------------------
+    def _dois_paineis(self):
+        aba = self.aba_atual()
+        if aba is None or aba.direita is None:
+            self.status("Abra os dois lados antes de comparar.")
+            return None
+        return aba
+
+    def comparar_pastas(self) -> None:
+        aba = self._dois_paineis()
+        if aba is not None:
+            self.status("Comparando...")
+            comparar_nos_paineis(self, aba.esquerda, aba.direita)
+
+    def sincronizar(self) -> None:
+        aba = self._dois_paineis()
+        if aba is not None:
+            SincronizarDialog(self.root, self, aba.esquerda, aba.direita,
+                              getattr(aba, "site", None))
+
     def _aplicar_limite(self) -> None:
         kbs = self.var_limite.get()
         self.fila.definir_limite(kbs)
@@ -441,10 +473,10 @@ class JanelaPrincipal(ttk.Frame):
                     if fechar:
                         leitor.fechar()
             except Exception as e:      # noqa: BLE001
-                self.after(0, lambda: self.status("Nao deu para ler a pasta: %s"
-                                                  % e))
+                self.ponte.chamar(
+                    lambda: self.status("Nao deu para ler a pasta: %s" % e))
                 return
-            self.after(0, lambda: self._enfileirar(site, sentido, pares))
+            self.ponte.chamar(lambda: self._enfileirar(site, sentido, pares))
 
         threading.Thread(target=trabalhar, name="expandir", daemon=True).start()
 
@@ -485,6 +517,7 @@ class JanelaPrincipal(ttk.Frame):
 
     def fechar(self) -> None:
         self._vivo = False
+        self.ponte.parar()
         for aba in self._abas:
             try:
                 aba.fechar()

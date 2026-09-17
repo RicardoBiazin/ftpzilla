@@ -26,7 +26,7 @@ Em construção, por marcos. Cada marco entrega algo que funciona de ponta a pon
 - [x] **M4** — Retomada e repetição automática.
 - [x] **M5** — SFTP.
 - [x] **M6** — Download segmentado.
-- [ ] **M7** — Comparação e sincronização de pastas.
+- [x] **M7** — Comparação e sincronização de pastas.
 - [ ] **M8** — Abas, favoritos, busca remota, editor remoto.
 - [ ] **M9** — Google Drive e OneDrive.
 - [ ] **M10** — Executável e empacotamento.

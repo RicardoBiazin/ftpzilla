@@ -121,6 +121,11 @@ class GerenciadorFila:
         self._por_id: Dict[int, ItemFila] = {}
         self._lock = threading.RLock()
         self._pools: Dict[str, object] = {}
+        # sites que existem so nesta sessao (conexao rapida, ou um site
+        # aberto e ainda nao salvo): sem isto, transferir de uma conexao
+        # rapida falharia com "o site nao existe mais", que e verdade do
+        # ponto de vista do arquivo e mentira do ponto de vista do usuario
+        self._sites_sessao: Dict[str, object] = {}
         self._pool_local = PoolLocal()
         self._executor: Optional[ThreadPoolExecutor] = None
         self._thread: Optional[threading.Thread] = None
@@ -428,13 +433,25 @@ class GerenciadorFila:
                 self._executor.submit(self._rodar, item)
         return proximo
 
+    def registrar_site(self, site) -> None:
+        """Torna um site alcancavel pela fila mesmo sem estar salvo."""
+        if site is not None and getattr(site, "id", ""):
+            self._sites_sessao[site.id] = site
+
+    def _site(self, site_id: str):
+        site = self._sites_sessao.get(site_id)
+        if site is not None:
+            return site
+        return (self.gerente_sites.por_id(site_id)
+                if self.gerente_sites is not None else None)
+
     def _pool_do(self, item: ItemFila):
         if not item.site_id:
             return self._pool_local
         pool = self._pools.get(item.site_id)
         if pool is not None:
             return pool
-        site = self.gerente_sites.por_id(item.site_id) if self.gerente_sites else None
+        site = self._site(item.site_id)
         if site is None:
             return None
         pool = PoolConexoes(site)
