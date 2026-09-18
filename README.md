@@ -49,7 +49,7 @@ python app.py
 
 | Atalho | O que faz |
 |---|---|
-| `Ctrl+S` | Gerente de sites |
+| `Ctrl+S` | Gerente de sites (com **Testar conexão** antes de salvar) |
 | `Ctrl+T` / `Ctrl+W` | Nova aba local / fechar aba |
 | `Ctrl+D` | Comparar a pasta dos dois painéis |
 | `Ctrl+F` | Procurar no servidor |
@@ -65,6 +65,17 @@ python app.py --verboso             # log em nível DEBUG
 ```
 
 ## O que ele faz de diferente, e por quê
+
+### Testar antes de salvar
+
+O gerente de sites tem um botão **Testar conexão** que conecta, lista a pasta inicial e desconecta, sem gravar nada. Além de dizer se conectou, ele relata o que o servidor **aceita**:
+
+```
+Conectou em 0,3s. Pasta inicial /, com 41 item(ns).
+retomada: sim | data preservada: NÃO | listagem: LIST
+```
+
+Isso não é enfeite. "Retomada: não" significa que uma transferência interrompida vai recomeçar do zero; "data preservada: não" significa que a sincronização vai comparar por tamanho, não por data. É melhor saber disso ao cadastrar o site do que no meio de um envio de 2 GB.
 
 ### Credenciais
 

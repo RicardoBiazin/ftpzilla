@@ -7,14 +7,40 @@ manteve o gerente de sites do mesmo tamanho com dois protocolos e com sete.
 """
 from __future__ import annotations
 
+import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional
 
 from .. import remotes, segredos
+from ..remotes.base import ErroCertificado, ErroChaveDesconhecida
 from ..sites import GerenteSites, Site
 from . import tema
+
+
+def _capacidades(remoto) -> str:
+    """Descreve, em portugues, o que o servidor aceita.
+
+    Nao e enfeite: um servidor sem retomada obriga transferencia interrompida
+    a recomecar do zero, e um sem MFMT faz a sincronizacao comparar por
+    tamanho. Melhor a pessoa saber disso ao cadastrar o site do que descobrir
+    no meio de um envio de 2 GB.
+    """
+    partes = []
+    partes.append("retomada: %s" % ("sim" if remoto.resume_download else "NAO"))
+    partes.append("data preservada: %s"
+                  % ("sim" if remoto.preserva_mtime else "NAO"))
+    if getattr(remoto, "tem_mlsd", None) is not None:
+        partes.append("listagem: %s" % ("MLSD" if remoto.tem_mlsd else "LIST"))
+    if getattr(remoto, "cert_fingerprint", ""):
+        partes.append("TLS ativo")
+    elif getattr(remoto, "fingerprint", ""):
+        partes.append("chave do servidor conferida")
+    if remoto.pode_chmod:
+        partes.append("permissoes: sim")
+    return " | ".join(partes)
 
 
 class FormularioSite(ttk.Frame):
@@ -295,8 +321,16 @@ class GerenteDialog(tk.Toplevel):
         self.form = FormularioSite(direita)
         self.form.pack(fill="both", expand=True)
 
+        self.lb_teste = ttk.Label(self, text="", style="Fraco.TLabel",
+                                  wraplength=700, justify="left",
+                                  padding=(10, 2))
+        self.lb_teste.pack(fill="x")
+
         rodape = ttk.Frame(self, padding=(8, 0, 8, 8))
         rodape.pack(fill="x")
+        self.bt_testar = ttk.Button(rodape, text="Testar conexao",
+                                    command=self.testar)
+        self.bt_testar.pack(side="left")
         ttk.Button(rodape, text="Conectar", command=self.conectar).pack(
             side="right")
         ttk.Button(rodape, text="Salvar", command=self.salvar).pack(
@@ -367,6 +401,103 @@ class GerenteDialog(tk.Toplevel):
             self.gerente.salvar()
             self._recarregar_lista(site.id)
         return site
+
+    # ------------------------------------------------------------------
+    # Testar antes de salvar
+    # ------------------------------------------------------------------
+    def testar(self) -> None:
+        """Conecta, lista a pasta inicial e desconecta, sem gravar nada.
+
+        Serve para descobrir o erro de digitacao agora, e nao na primeira vez
+        que a pessoa for usar o site de verdade. Alem de dizer se conectou, o
+        teste relata o que o servidor ACEITA (retomada, data, listagem), que e
+        o que determina se a fila vai poder retomar transferencia e se a
+        sincronizacao vai poder comparar por data.
+        """
+        site = self.form.aplicar()
+        if site is None:
+            self._mostrar_teste("Escolha um site na lista.", "erro")
+            return
+        if not site.host:
+            self._mostrar_teste("Informe o endereco do servidor.", "erro")
+            return
+
+        # o Site e copiado com os segredos em claro AQUI, na thread do
+        # Tkinter; a thread de trabalho nao toca em widget nem em variavel
+        # da interface
+        copia = site.revelado()
+        self.bt_testar.configure(state="disabled")
+        self._mostrar_teste("Conectando em %s..." % site.host, "neutro")
+        resposta: "queue.Queue" = queue.Queue()
+
+        def trabalhar():
+            remoto = None
+            inicio = time.time()
+            try:
+                remoto = remotes.make_remote(copia)
+                remoto.conectar()
+                pasta = remoto.home()
+                itens = remoto.listar(pasta)
+                resposta.put(("ok", {
+                    "pasta": pasta,
+                    "itens": len(itens),
+                    "segundos": time.time() - inicio,
+                    "capacidades": _capacidades(remoto),
+                }))
+            except BaseException as e:      # noqa: BLE001
+                resposta.put(("erro", e))
+            finally:
+                if remoto is not None:
+                    try:
+                        remoto.fechar()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=trabalhar, name="testar", daemon=True).start()
+        self._esperar_teste(resposta, site)
+
+    def _esperar_teste(self, resposta, site) -> None:
+        try:
+            tipo, valor = resposta.get_nowait()
+        except queue.Empty:
+            try:
+                self.after(100, self._esperar_teste, resposta, site)
+            except tk.TclError:
+                pass
+            return
+
+        self.bt_testar.configure(state="normal")
+        if tipo == "ok":
+            self._mostrar_teste(
+                "Conectou em %.1fs. Pasta inicial %s, com %d item(ns). %s"
+                % (valor["segundos"], valor["pasta"], valor["itens"],
+                   valor["capacidades"]), "ok")
+            return
+
+        exc = valor
+        # os dois erros que o usuario consegue resolver respondendo uma
+        # pergunta sao tratados aqui, e o teste recomeca
+        if isinstance(exc, ErroCertificado):
+            if confirmar_certificado(self, site.host, exc.fingerprint,
+                                     str(exc)):
+                site.cert_fingerprint = exc.fingerprint
+                self.form.carregar(site)
+                self.testar()
+                return
+        elif isinstance(exc, ErroChaveDesconhecida):
+            escolha = confirmar_chave_host(self, exc.host, exc.fingerprint,
+                                           exc.mudou)
+            if escolha in ("salvar", "uma_vez"):
+                site.opcoes["aceitar_chave"] = escolha
+                self.testar()
+                return
+        self._mostrar_teste("Nao conectou: %s" % exc, "erro")
+
+    def _mostrar_teste(self, texto: str, situacao: str) -> None:
+        estilos = {"ok": "Accent.TLabel", "erro": "Erro.TLabel",
+                   "neutro": "Fraco.TLabel"}
+        self.lb_teste.configure(text=texto,
+                                style=estilos.get(situacao, "Fraco.TLabel"))
 
     def conectar(self) -> None:
         site = self.salvar()

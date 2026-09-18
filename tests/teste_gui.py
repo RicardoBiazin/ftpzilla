@@ -410,6 +410,75 @@ def teste_aba_de_servidor_de_ponta_a_ponta():
                     pass
 
 
+def teste_testar_conexao_antes_de_salvar():
+    """O botao 'Testar conexao' conecta de verdade, sem gravar nada - e diz
+    o que o servidor aceita, que e o que decide se a fila podera retomar."""
+    if not tem_display():
+        pular("sem display grafico")
+    import servidores
+    if not servidores.tem_pyftpdlib():
+        pular("pyftpdlib nao instalado")
+    tk = _tk()
+    import os
+    from ftpzilla.sites import GerenteSites, Site
+    from ftpzilla.ui import tema
+    from ftpzilla.ui.dialogos import GerenteDialog
+
+    with PastaTemp() as tmp:
+        raiz = os.path.join(tmp, "servidor")
+        escrever(os.path.join(raiz, "a.txt"), b"x")
+        escrever(os.path.join(raiz, "b.txt"), b"y")
+
+        with servidores.servidor_ftp(raiz) as (host, porta):
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                tema.aplicar(root, "Escuro")
+                caminho = os.path.join(tmp, "sites.json")
+                gerente = GerenteSites(caminho)
+                site = gerente.adicionar(Site(
+                    nome="Teste", kind="ftp", host=host, porta=porta,
+                    usuario=servidores.USUARIO, senha=servidores.SENHA,
+                    tls_modo="nenhum"))
+                dlg = GerenteDialog(root, gerente)
+                dlg.tree.selection_set(site.id)
+                dlg._selecionou()
+                root.update()
+
+                dlg.testar()
+                fim = time.time() + 30
+                while time.time() < fim and "Conectando" in dlg.lb_teste["text"]:
+                    root.update()
+                    time.sleep(0.02)
+                texto = dlg.lb_teste["text"]
+                checar("Conectou" in texto, "o teste conectou (%s)" % texto)
+                checar("2 item" in texto, "e contou os arquivos da pasta")
+                checar("retomada: sim" in texto,
+                       "relatou que o servidor aceita retomada")
+                checar("MLSD" in texto, "e qual listagem ele usa")
+                checar(not os.path.exists(caminho),
+                       "testar NAO grava o sites.json - salvar continua sendo "
+                       "uma acao separada")
+
+                # agora com senha errada: o erro precisa aparecer na propria
+                # janela, e nao virar uma caixa de dialogo que trava o teste
+                dlg.form._vars["senha"].set("senha-errada")
+                dlg.testar()
+                fim = time.time() + 30
+                while time.time() < fim and "Conectando" in dlg.lb_teste["text"]:
+                    root.update()
+                    time.sleep(0.02)
+                checar("Nao conectou" in dlg.lb_teste["text"],
+                       "senha errada e relatada na janela (%s)"
+                       % dlg.lb_teste["text"][:60])
+                dlg.destroy()
+            finally:
+                try:
+                    root.destroy()
+                except tk.TclError:
+                    pass
+
+
 def teste_formulario_vem_do_registro():
     """Protocolo novo tem que aparecer no gerente de sites sozinho. Se este
     teste quebrar ao registrar um backend, e porque alguem escreveu campo na
@@ -498,6 +567,7 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_sincronizar_pela_interface,
           teste_comparacao_pinta_os_paineis,
           teste_aba_de_servidor_de_ponta_a_ponta,
+          teste_testar_conexao_antes_de_salvar,
           teste_formulario_vem_do_registro,
           teste_senha_protegida_nao_aparece_no_formulario]
 
