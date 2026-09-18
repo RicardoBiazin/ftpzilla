@@ -15,6 +15,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Dict, List
 
+import time
+
 from .. import util
 from ..fila_store import (CANCELADO, CONCLUIDO, ENVIAR, ESPERANDO, FALHOU,
                           PAUSADO, PULADO, RODANDO)
@@ -148,7 +150,9 @@ class FilaView(ttk.Frame):
                 self.tree.selection_add(iid)
 
     def _atualizar_em_curso(self) -> None:
-        for item in self.fila.por_estado(RODANDO):
+        # inclui quem esta esperando para tentar de novo: a contagem
+        # regressiva precisa andar na tela
+        for item in self.fila.por_estado(RODANDO, ESPERANDO):
             iid = self._linhas.get(item.id)
             if iid is None:
                 self._sujo = True
@@ -170,9 +174,26 @@ class FilaView(ttk.Frame):
         s = item.snapshot()
         progresso = "%.0f%%" % s["pct"] if s["total"] else (
             util.fmt_bytes(s["feitos"]) if s["feitos"] else "")
-        detalhe = item.erro
-        if not detalhe:
-            detalhe = item.destino if item.sentido == ENVIAR else item.destino
+
+        estado = ROTULO_ESTADO.get(item.estado, item.estado)
+        restante = ""
+        detalhe = item.erro or item.destino
+
+        # Um item esperando para tentar de novo parecia simplesmente parado:
+        # barra congelada, "Na fila", e nenhuma pista de que algo ia
+        # acontecer. Mostrar a contagem regressiva e a tentativa e a
+        # diferenca entre "travou" e "esta se recuperando".
+        if item.estado == ESPERANDO and item.tentativas:
+            falta = item.proxima_em - time.time()
+            estado = "Tentativa %d" % (item.tentativas + 1)
+            restante = util.fmt_tempo(falta) if falta > 0 else "agora"
+            if item.erro:
+                detalhe = "%s - nova tentativa %s" % (
+                    item.erro, ("em " + util.fmt_tempo(falta)) if falta > 0
+                    else "agora")
+        elif item.estado == RODANDO:
+            restante = util.fmt_tempo(s["eta"])
+
         return (
             "↑" if item.sentido == ENVIAR else "↓",
             item.nome,
@@ -180,8 +201,8 @@ class FilaView(ttk.Frame):
             util.fmt_bytes(item.tamanho) if item.tamanho >= 0 else "-",
             progresso,
             util.fmt_velocidade(s["velocidade"]) if item.estado == RODANDO else "",
-            util.fmt_tempo(s["eta"]) if item.estado == RODANDO else "",
-            ROTULO_ESTADO.get(item.estado, item.estado),
+            restante,
+            estado,
             util.elidir(detalhe, 80),
         )
 

@@ -42,6 +42,13 @@ from .base import (BLOCO, Cancelado, Entry, ErroAutenticacao, ErroCertificado,
 logger = log.get()
 
 TIMEOUT = 30
+#: prazo para o PRIMEIRO byte chegar no canal de dados. Servidor sobrecarregado
+#: aceita a conexao de dados e nunca manda nada; sem este prazo, quem espera e
+#: o usuario - ate o servidor resetar do lado dele, o que pode levar 20s ou
+#: mais. Desistir antes e tentar outra conexao costuma ser instantaneo.
+TIMEOUT_PRIMEIRO_BYTE = 12
+#: prazo entre blocos, ja com a transferencia andando
+TIMEOUT_DADOS = 60
 PORTA = 21
 PORTA_IMPLICITA = 990
 
@@ -670,12 +677,18 @@ class FtpRemote(Remote):
             self.ftp.voidcmd("TYPE I")
             conn = self.ftp.transfercmd("RETR " + caminho,
                                         rest=offset or None)
+            self._prazo(conn, TIMEOUT_PRIMEIRO_BYTE)
+            primeiro = True
             while True:
                 pedir = BLOCO if restante is None else min(BLOCO, restante)
                 if pedir <= 0:
                     parcial = True     # parou por limite, ainda ha dados la
                     break
                 dados = conn.recv(pedir)
+                if primeiro:
+                    # o servidor comecou a responder: solta o prazo curto
+                    primeiro = False
+                    self._prazo(conn, TIMEOUT_DADOS)
                 if not dados:
                     break
                 destino_fobj.write(dados)
@@ -711,6 +724,7 @@ class FtpRemote(Remote):
         try:
             self.ftp.voidcmd("TYPE I")
             conn = self.ftp.transfercmd(comando, rest=rest)
+            self._prazo(conn, TIMEOUT_DADOS)
             while True:
                 bloco = origem_fobj.read(BLOCO)
                 if not bloco:
@@ -737,6 +751,13 @@ class FtpRemote(Remote):
             raise _traduzir(e) from e
         self._fechar_dados(conn, False)
         return enviados
+
+    @staticmethod
+    def _prazo(conn, segundos: int) -> None:
+        try:
+            conn.settimeout(segundos)
+        except Exception:
+            pass
 
     def _fechar_dados(self, conn, parcial: bool) -> None:
         """Fecha o canal de dados e le a resposta final.

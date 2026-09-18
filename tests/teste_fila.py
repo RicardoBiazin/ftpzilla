@@ -368,6 +368,36 @@ def teste_erro_transitorio_agenda_nova_tentativa():
             g.fechar()
 
 
+def teste_fila_mostra_a_contagem_para_a_nova_tentativa():
+    """Item esperando para tentar de novo parecia travado: barra congelada,
+    'Na fila', e nenhuma pista de que algo ia acontecer. Foi o que levou o
+    usuario a achar que o download tinha morrido."""
+    from ftpzilla.fila import ItemFila
+    from ftpzilla.fila_store import ESPERANDO
+    from ftpzilla.ui.fila_view import FilaView
+
+    item = ItemFila(origem="/g.bin", destino="C:/g.bin", tamanho=1000,
+                    bytes_feitos=750, estado=ESPERANDO, tentativas=2,
+                    proxima_em=time.time() + 9,
+                    erro="conexao derrubada pelo servidor")
+    valores = FilaView._valores(item)
+    texto = " | ".join(str(v) for v in valores)
+    checar("75%" in texto, "o progresso alcancado continua visivel")
+    checar("Tentativa 3" in texto,
+           "o estado diz qual tentativa vem agora, em vez de 'Na fila'")
+    import re
+    # o valor exato depende de quanto tempo passou entre montar o item e
+    # desenhar a linha; o que importa e a contagem estar la, em segundos
+    checar(re.search(r"\b[789]s\b", texto) is not None,
+           "e quanto falta para ela comecar (%s)" % texto[:90])
+    checar("conexao derrubada" in texto, "o motivo da queda segue na linha")
+
+    # sem tentativa nenhuma, nada de contagem regressiva
+    normal = ItemFila(origem="/a", destino="b", estado=ESPERANDO)
+    checar("Na fila" in " ".join(str(v) for v in FilaView._valores(normal)),
+           "item que nunca falhou continua so 'Na fila'")
+
+
 def teste_backoff():
     from ftpzilla import transfer
     esperas = [transfer.espera(n) for n in range(1, 6)]
@@ -387,7 +417,8 @@ TESTES = [teste_store_basico, teste_rodando_vira_pausado_ao_abrir,
           teste_envia_de_verdade, teste_expandir_pasta,
           teste_fila_sobrevive_a_fechar, teste_pausar_e_cancelar,
           teste_site_sumido_vira_falha,
-          teste_erro_transitorio_agenda_nova_tentativa, teste_backoff]
+          teste_erro_transitorio_agenda_nova_tentativa,
+          teste_fila_mostra_a_contagem_para_a_nova_tentativa, teste_backoff]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Fila de transferencias"))
