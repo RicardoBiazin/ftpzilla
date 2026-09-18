@@ -11,6 +11,17 @@ rem desatualizado em relacao a este arquivo, que e o que as pessoas leem.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
+rem O PyInstaller sobrescreve dist\FTPZilla.exe; com o programa aberto isso
+rem falha la no fim, depois de dois minutos de trabalho, com um traceback de
+rem PermissionError que nao diz o obvio. Melhor avisar agora.
+tasklist /FI "IMAGENAME eq FTPZilla.exe" 2>nul | find /I "FTPZilla.exe" >nul
+if not errorlevel 1 (
+  echo.
+  echo *** O FTPZilla esta aberto. Feche a janela antes de gerar o executavel
+  echo     - o arquivo dist\FTPZilla.exe fica travado enquanto ele roda.
+  exit /b 1
+)
+
 echo.
 echo === Gerando o icone
 python ferramentas\gerar_icone.py || goto :erro

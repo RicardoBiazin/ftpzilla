@@ -30,6 +30,7 @@ SUITES = [
     ("teste_segmentos.py", "Download segmentado"),
     ("teste_sftp.py", "SFTP (servidor paramiko em thread)"),
     ("teste_compare.py", "Comparacao e sincronizacao"),
+    ("teste_conflitos.py", "Arquivo que ja existe no destino"),
     ("teste_busca.py", "Busca remota e editor remoto"),
     ("teste_nuvem.py", "Google Drive e OneDrive (APIs falsas)"),
     ("teste_gui.py", "Fumaca da interface"),

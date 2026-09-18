@@ -86,6 +86,14 @@ Quem decide o que é segredo não é o gerente de sites: é o próprio backend, 
 
 Quem prefere o Gerenciador de Credenciais do Windows pode usar o `keyring` como backend alternativo. Fora do Windows não há DPAPI: as senhas ficam em texto puro, e o programa **avisa isso na tela**, não só no log.
 
+### Quando o arquivo já existe no destino
+
+Transferir por cima de um arquivo existente **pergunta antes**. O diálogo mostra os dois lados — tamanho e data de cada um — porque é essa comparação que decide, e oferece: substituir, substituir só se a origem for mais nova, continuar de onde parou, manter os dois (renomeando o que chega) ou pular.
+
+A pergunta pode ser respondida para todos de uma vez ou só para os selecionados, e a opção que já vem marcada é a menos destrutiva para o caso: se tudo tem o mesmo tamanho e a mesma data, vem marcado "pular"; se o arquivo do destino está incompleto, vem "continuar".
+
+A consulta é feita **por pasta**, não por arquivo: uma listagem traz nome, tamanho e data de tudo de uma vez. Com trezentos arquivos, um `stat` por arquivo seria a diferença entre meio segundo e vários minutos.
+
 ### Retomada
 
 Retomar sem conferir é como um cliente de FTP corrompe arquivo em silêncio: o resultado fica com o tamanho perfeitamente certo e o conteúdo embaralhado, e ninguém descobre até precisar dele. Por isso o parcial só é reaproveitado quando **tudo** bate — existe no disco, tem exatamente o tamanho que a fila registrou, e o arquivo remoto continua com o mesmo tamanho e a mesma data. Qualquer divergência recomeça do zero e diz por quê.

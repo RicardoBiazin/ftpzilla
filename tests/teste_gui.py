@@ -451,6 +451,123 @@ def _clicar(notebook, ponto):
     notebook._soltou(evento)
 
 
+def teste_pergunta_antes_de_sobrescrever():
+    """Transferir por cima de um arquivo que ja existe tem que PERGUNTAR.
+
+    Era o defeito: o campo acao_existente existia na fila desde o inicio,
+    mas ninguem consultava, e o arquivo era substituido calado.
+    """
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from ftpzilla.conflitos import PULAR, SOBRESCREVER
+    from ftpzilla.ui import janela as mod_janela
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp() as tmp:
+        origem = os.path.join(tmp, "de")
+        destino = os.path.join(tmp, "para")
+        escrever(os.path.join(origem, "igual.txt"), b"versao nova")
+        escrever(os.path.join(origem, "novo.txt"), b"so aqui")
+        escrever(os.path.join(destino, "igual.txt"), b"versao ANTIGA")
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            aba = j.aba_atual()
+            aba.esquerda.ir_para(origem.replace("\\", "/"))
+            aba.direita.ir_para(destino.replace("\\", "/"))
+            root.update()
+
+            # o dialogo e modal; aqui ele e substituido por uma resposta fixa
+            perguntas = []
+            original = mod_janela.ConflitosDialog
+
+            class DialogoFalso:
+                def __init__(self, master, achados, total):
+                    perguntas.append((achados, total))
+                    self.cancelou = False
+                    self.decisoes = {c.indice: PULAR for c in achados}
+
+            mod_janela.ConflitosDialog = DialogoFalso
+            try:
+                j.transferir(aba.esquerda, list(aba.esquerda._itens))
+                root.update()
+            finally:
+                mod_janela.ConflitosDialog = original
+
+            igual(len(perguntas), 1, "perguntou antes de transferir")
+            achados, total = perguntas[0]
+            igual(total, 2, "avisou sobre os dois arquivos da selecao")
+            igual([c.nome for c in achados], ["igual.txt"],
+                  "e listou so o que ja existia no destino")
+            checar(achados[0].tamanho_destino == 13,
+                   "com o tamanho do arquivo que esta la")
+
+            igual(len(j.fila.itens), 1,
+                  "respondendo 'pular', so o arquivo novo entra na fila")
+            igual(j.fila.itens[0].nome, "novo.txt", "e e o arquivo certo")
+
+            fim = time.time() + 30
+            while time.time() < fim and not j.fila.esperar_vazia(0.2):
+                root.update()
+            with open(os.path.join(destino, "igual.txt"), "rb") as f:
+                igual(f.read(), b"versao ANTIGA",
+                      "o arquivo que existia no destino NAO foi tocado")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def teste_nao_pergunta_quando_nao_ha_conflito():
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from ftpzilla.ui import janela as mod_janela
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp() as tmp:
+        origem = os.path.join(tmp, "de")
+        destino = os.path.join(tmp, "para")
+        escrever(os.path.join(origem, "unico.txt"), b"conteudo")
+        os.makedirs(destino, exist_ok=True)
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            aba = j.aba_atual()
+            aba.esquerda.ir_para(origem.replace("\\", "/"))
+            aba.direita.ir_para(destino.replace("\\", "/"))
+            root.update()
+
+            chamou = []
+            original = mod_janela.ConflitosDialog
+            mod_janela.ConflitosDialog = lambda *a, **k: chamou.append(1)
+            try:
+                j.transferir(aba.esquerda, list(aba.esquerda._itens))
+                root.update()
+            finally:
+                mod_janela.ConflitosDialog = original
+
+            igual(chamou, [],
+                  "sem conflito, nada de dialogo no caminho de quem so quer "
+                  "copiar um arquivo")
+            igual(len(j.fila.itens), 1, "e o item foi direto para a fila")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
 def teste_escolher_pasta_local():
     """O painel local tem um botao que abre o seletor de pastas do sistema.
 
@@ -842,6 +959,8 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_sincronizar_pela_interface,
           teste_comparacao_pinta_os_paineis,
           teste_aba_de_servidor_de_ponta_a_ponta,
+          teste_pergunta_antes_de_sobrescrever,
+          teste_nao_pergunta_quando_nao_ha_conflito,
           teste_escolher_pasta_local,
           teste_painel_remoto_nao_tem_seletor_do_windows,
           teste_fechar_abas,

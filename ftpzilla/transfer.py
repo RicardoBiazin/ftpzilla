@@ -231,6 +231,19 @@ def _baixar(item, origem: Remote, destino: Remote, medidor, cancelar, store,
                              % item.origem)
     tamanho = info.size
     item.tamanho = tamanho
+
+    # "continuar de onde parou" com um arquivo que ja esta no destino: em vez
+    # de inventar um caminho novo, o arquivo vira o proprio parcial e toda a
+    # validacao de retomada (tamanho, data, hash no fim) vale igual
+    if item.acao_existente == "resumir" and not os.path.exists(parcial) \
+            and os.path.exists(alvo):
+        ja = os.path.getsize(alvo)
+        if 0 < ja < tamanho:
+            os.replace(alvo, parcial)
+            item.bytes_feitos = ja
+            item.mtime = info.mtime
+            logger.info("Continuando %s a partir dos %s que ja estavam no "
+                        "destino.", item.nome, _humano(ja))
     retomada = validar_download(parcial, item.bytes_feitos, tamanho,
                                 info.mtime, item.mtime,
                                 origem.resume_download)
@@ -307,6 +320,10 @@ def _enviar(item, origem: Remote, destino: Remote, medidor, cancelar, store,
 
     ja_la = destino.stat(item.destino)
     tamanho_destino = ja_la.size if ja_la is not None else -1
+    if item.acao_existente == "resumir" and not item.bytes_feitos \
+            and 0 < tamanho_destino < tamanho:
+        # o usuario pediu para continuar o que ja esta no servidor
+        item.bytes_feitos = tamanho_destino
     retomada = validar_upload(tamanho_destino, item.bytes_feitos,
                               destino.resume_upload)
     if item.bytes_feitos and not retomada:
@@ -616,6 +633,11 @@ def conferir_integridade(origem: Remote, caminho_remoto: str,
         return False, ("o %s do arquivo baixado nao bate com o do servidor"
                        % algoritmo.upper())
     return True, "%s conferido com o servidor" % algoritmo.upper()
+
+
+def _humano(n: int) -> str:
+    from .util import fmt_bytes
+    return fmt_bytes(n)
 
 
 def descrever_erro(exc: BaseException) -> str:

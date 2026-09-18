@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .. import __version__, log, remotes, segredos, util
+from .. import conflitos as conflitos_mod
 from ..fila import GerenciadorFila
 from ..fila_store import BAIXAR, ENVIAR
 from ..sites import GerenteSites, site_rapido
@@ -28,6 +29,7 @@ from .abas import NotebookFechavel
 from ..editor import EditorRemoto
 from . import dnd
 from .busca_view import BuscaDialog
+from .conflitos_view import ConflitosDialog
 from .fila_view import FilaView
 from .sincronizar import SincronizarDialog, comparar_nos_paineis
 
@@ -764,14 +766,53 @@ class JanelaPrincipal(ttk.Frame):
         threading.Thread(target=trabalhar, name="expandir", daemon=True).start()
 
     def _enfileirar(self, site, sentido: str, pares) -> None:
+        """Confere o que ja existe no destino ANTES de enfileirar.
+
+        Sobrescrever calado e o jeito mais facil de destruir trabalho: a
+        pessoa arrasta a pasta de novo "so para pegar o que faltava" e perde
+        o que tinha editado do outro lado.
+        """
         if not pares:
             self.status("Nada para transferir.")
             return
+
+        pares, acoes = self._resolver_conflitos(site, sentido, pares)
+        if not pares:
+            self.status("Nada a transferir: tudo ja estava no destino.")
+            return
+
         itens = self.fila.montar_itens(site, sentido, pares)
+        for item, acao in zip(itens, acoes):
+            item.acao_existente = acao
         self.fila.enfileirar(itens)
         self.fila_view.marcar_sujo()
         self.rodape.select(self.quadro_fila)
         self.status("%d arquivo(s) na fila." % len(itens))
+
+    def _resolver_conflitos(self, site, sentido: str, pares):
+        """Devolve (pares, acoes) depois de perguntar o que fazer."""
+        remoto = None
+        aba = self.aba_atual()
+        if sentido != BAIXAR and aba is not None and aba.direita is not None:
+            remoto = aba.direita.nav.remote
+        try:
+            achados = conflitos_mod.detectar(pares, sentido, remoto)
+        except Exception as e:      # noqa: BLE001 - conferir nunca derruba
+            self.logger.warning("Nao deu para conferir o destino: %s", e)
+            achados = []
+
+        if not achados:
+            return pares, [conflitos_mod.SOBRESCREVER] * len(pares)
+
+        dialogo = ConflitosDialog(self.root, achados, len(pares))
+        if dialogo.cancelou:
+            return [], []
+        pares, acoes, pulados = conflitos_mod.aplicar(pares, achados,
+                                                      dialogo.decisoes)
+        if pulados:
+            self.logger.info("%d arquivo(s) nao foram transferidos por ja "
+                             "existirem no destino.", pulados)
+        return pares, acoes
 
     def status_painel(self, titulo: str, texto: str) -> None:
         self.status(texto)
