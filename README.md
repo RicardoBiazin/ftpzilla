@@ -50,7 +50,7 @@ python app.py
 | Atalho | O que faz |
 |---|---|
 | `Ctrl+S` | Gerente de sites (com **Testar conexão** antes de salvar) |
-| `Ctrl+T` / `Ctrl+W` | Nova aba local / fechar aba |
+| `Ctrl+T` / `Ctrl+W` | Nova aba local / fechar aba (ou o **X** na aba, ou o botão do meio) |
 | `Ctrl+D` | Comparar a pasta dos dois painéis |
 | `Ctrl+F` | Procurar no servidor |
 | `F5` / `Backspace` | Atualizar / subir um nível |

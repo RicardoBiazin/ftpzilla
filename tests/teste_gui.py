@@ -410,6 +410,178 @@ def teste_aba_de_servidor_de_ponta_a_ponta():
                     pass
 
 
+class _Clique:
+    """Evento de mouse de mentira, com o que os tratadores leem."""
+
+    def __init__(self, x, y):
+        self.x = self.x_root = x
+        self.y = self.y_root = y
+
+
+def _achar_x(notebook, elemento, deiconify=None):
+    """Primeira coordenada da faixa de abas em que 'elemento' responde.
+
+    Nao ha API para pedir a area de uma aba (o bbox de um Notebook e o do
+    grid, e devolve zeros), entao a varredura e o jeito honesto de saber
+    onde o usuario teria de clicar.
+    """
+    if deiconify is not None:
+        deiconify.deiconify()
+        for _ in range(3):
+            deiconify.update()
+    achado = None
+    for y in range(4, 34):
+        for x in range(0, 500):
+            try:
+                if elemento in (notebook.identify(x, y) or ""):
+                    achado = (x, y)
+                    break
+            except Exception:       # noqa: BLE001
+                return None
+        if achado:
+            break
+    if deiconify is not None:
+        deiconify.withdraw()
+    return achado
+
+
+def _clicar(notebook, ponto):
+    evento = _Clique(*ponto)
+    notebook._pressionou(evento)
+    notebook._soltou(evento)
+
+
+def teste_fechar_abas():
+    """Cada aba tem um X. Fechar precisa desconectar, e nunca deixar a
+    janela sem aba nenhuma."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla.ui.abas import ELEMENTO
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp():
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            root.update()
+            igual(len(j._abas), 1, "comeca com uma aba")
+
+            j.nova_aba_local()
+            j.nova_aba_local()
+            root.update()
+            igual(len(j._abas), 3, "tres abas abertas")
+
+            # O X e um elemento do tema, com area propria: a prova de que ele
+            # existe de verdade e o identify() devolve-lo em alguma
+            # coordenada. Conferir so o layout nao vale - um nome de elemento
+            # errado no layout nao da erro nenhum, o ttk simplesmente nao
+            # desenha, e foi assim que o X ficou invisivel na primeira versao.
+            root.deiconify()
+            for _ in range(3):
+                root.update()
+            ponto = _achar_x(j.abas, ELEMENTO)
+            root.withdraw()
+            if ponto is None:
+                ajuda.falha("o X nao aparece em lugar nenhum da aba")
+            else:
+                ajuda.ok("o X tem area propria na aba, em %s" % (ponto,))
+                antes = len(j._abas)
+                _clicar(j.abas, ponto)
+                root.update()
+                igual(len(j._abas), antes - 1, "clicar no X fechou a aba")
+
+                # clicar no rotulo troca de aba, nunca fecha
+                rotulo = _achar_x(j.abas, "label", deiconify=root)
+                if rotulo is not None:
+                    antes = len(j._abas)
+                    _clicar(j.abas, rotulo)
+                    root.update()
+                    igual(len(j._abas), antes,
+                          "clicar no rotulo NAO fecha - so o X fecha")
+
+            while len(j._abas) < 3:
+                j.nova_aba_local()
+            root.update()
+            alvo = j._abas[1]
+            antes = len(j._abas)
+            j.fechar_aba(alvo)
+            root.update()
+            igual(len(j._abas), antes - 1, "fechar tirou a aba da lista")
+            checar(alvo not in j._abas, "e foi a aba pedida, nao a atual")
+            igual(len(j.abas.tabs()), antes - 1,
+                  "o notebook tambem perdeu a aba")
+
+            j.fechar_outras(j._abas[0])
+            root.update()
+            igual(len(j._abas), 1, "'fechar as outras' deixa so uma")
+
+            # fechar a ultima nao pode deixar a janela vazia
+            j.fechar_aba(j._abas[0])
+            root.update()
+            igual(len(j._abas), 1,
+                  "fechar a ultima abre uma nova no lugar, em vez de deixar "
+                  "a janela sem chao")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def teste_abas_repetidas_ganham_numero():
+    """Tres abas 'CNES' identicas nao dizem qual e qual."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla.sites import Site
+    from ftpzilla.ui.janela import JanelaPrincipal
+
+    with PastaTemp():
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            # host que nao resolve: a conexao falha, que e justamente o caso
+            # em que as abas se acumulam
+            for _ in range(3):
+                j.abrir_site(Site(nome="CNES", kind="ftp",
+                                  host="servidor.que.nao.existe.invalido",
+                                  tls_modo="nenhum"))
+            root.update()
+            titulos = [a.titulo for a in j._abas if getattr(a, "site", None)]
+            igual(titulos, ["CNES", "CNES (2)", "CNES (3)"],
+                  "as repetidas ganham numero")
+
+            aba = j._abas[-1]
+            fim = time.time() + 30
+            while time.time() < fim and "Conectando" in aba.lb_espera["text"]:
+                root.update()
+                time.sleep(0.02)
+            texto = aba.lb_espera["text"]
+            checar("nao encontrado" in texto,
+                   "o erro de DNS vira uma frase compreensivel, e nao "
+                   "'[Errno 11001] getaddrinfo failed' (%s)"
+                   % texto.replace("\n", " ")[:70])
+            # winfo_ismapped() e sempre falso com a janela escondida, entao
+            # o que se verifica e se o quadro foi empacotado
+            checar(aba.quadro_botoes.winfo_manager() == "pack",
+                   "a aba que falhou mostra os botoes de tentar de novo e "
+                   "fechar")
+            aba.reconectar()
+            root.update()
+            checar(aba.quadro_botoes.winfo_manager() != "pack",
+                   "e os botoes somem enquanto ela tenta de novo")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
 def teste_testar_conexao_antes_de_salvar():
     """O botao 'Testar conexao' conecta de verdade, sem gravar nada - e diz
     o que o servidor aceita, que e o que decide se a fila podera retomar."""
@@ -567,6 +739,8 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_sincronizar_pela_interface,
           teste_comparacao_pinta_os_paineis,
           teste_aba_de_servidor_de_ponta_a_ponta,
+          teste_fechar_abas,
+          teste_abas_repetidas_ganham_numero,
           teste_testar_conexao_antes_de_salvar,
           teste_formulario_vem_do_registro,
           teste_senha_protegida_nao_aparece_no_formulario]

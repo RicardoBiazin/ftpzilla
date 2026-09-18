@@ -24,6 +24,7 @@ from ..sites import GerenteSites, site_rapido
 from . import dialogos, tema
 from .ponte import Ponte
 from .aba import AbaLocal, AbaSite
+from .abas import NotebookFechavel
 from ..editor import EditorRemoto
 from . import dnd
 from .busca_view import BuscaDialog
@@ -228,7 +229,9 @@ class JanelaPrincipal(ttk.Frame):
         self.vertical = ttk.PanedWindow(self, orient="vertical")
         self.vertical.pack(fill="both", expand=True)
 
-        self.abas = ttk.Notebook(self.vertical)
+        self.abas = NotebookFechavel(self.vertical,
+                                     ao_fechar=self.fechar_aba,
+                                     ao_menu=self._menu_da_aba)
         self.vertical.add(self.abas, weight=3)
 
         self.rodape = ttk.Notebook(self.vertical)
@@ -260,9 +263,20 @@ class JanelaPrincipal(ttk.Frame):
         # a fila precisa achar este site mesmo que ele nunca seja salvo
         self.fila.registrar_site(site)
         aba = AbaSite(self.abas, self, site)
-        self.abas.add(aba, text=site.nome)
+        aba.titulo = self._titulo_livre(site.nome)
+        self.abas.add(aba, text=aba.titulo)
         self.abas.select(aba)
         self._abas.append(aba)
+
+    def _titulo_livre(self, nome: str) -> str:
+        """Numera as repeticoes: tres abas 'CNES' nao dizem qual e qual."""
+        usados = {getattr(a, "titulo", "") for a in self._abas}
+        if nome not in usados:
+            return nome
+        n = 2
+        while "%s (%d)" % (nome, n) in usados:
+            n += 1
+        return "%s (%d)" % (nome, n)
 
     def atualizar_titulo_aba(self, aba) -> None:
         try:
@@ -277,17 +291,56 @@ class JanelaPrincipal(ttk.Frame):
                 return aba
         return self._abas[0] if self._abas else None
 
-    def fechar_aba(self) -> None:
-        aba = self.aba_atual()
-        if aba is None:
+    def fechar_aba(self, aba=None) -> None:
+        """Fecha a aba indicada (ou a atual). Desconecta antes de sumir."""
+        aba = aba if aba is not None else self.aba_atual()
+        if aba is None or aba not in self._abas:
             return
         if len(self._abas) == 1:
-            self.status("A ultima aba nao pode ser fechada.")
-            return
+            # sem aba nenhuma a janela fica sem chao; em vez de bloquear,
+            # abre uma local limpa no lugar da que esta saindo
+            self.nova_aba_local()
+        nome = getattr(aba, "titulo", "")
         aba.fechar()
         self.abas.forget(aba)
         self._abas.remove(aba)
         aba.destroy()
+        if nome:
+            self.status("Aba %s fechada." % nome)
+
+    def fechar_outras(self, manter) -> None:
+        for aba in list(self._abas):
+            if aba is not manter:
+                self.fechar_aba(aba)
+
+    def _menu_da_aba(self, indice: int, evento) -> None:
+        """Menu do botao direito na aba."""
+        try:
+            aba = self.nametowidget(self.abas.tabs()[indice])
+        except (IndexError, KeyError, tk.TclError):
+            return
+        menu = tk.Menu(self, tearoff=0)
+        if getattr(aba, "site", None) is not None:
+            menu.add_command(label="Reconectar",
+                             command=lambda: self.reconectar_aba(aba))
+            menu.add_separator()
+        menu.add_command(label="Fechar", command=lambda: self.fechar_aba(aba))
+        menu.add_command(label="Fechar as outras",
+                         command=lambda: self.fechar_outras(aba))
+        menu.add_separator()
+        menu.add_command(label="Nova aba local", command=self.nova_aba_local)
+        tema.pintar_classico(menu)
+        try:
+            menu.tk_popup(evento.x_root, evento.y_root)
+        finally:
+            menu.grab_release()
+
+    def reconectar_aba(self, aba) -> None:
+        """Tenta de novo sem perder a aba - util depois de queda de rede."""
+        if getattr(aba, "site", None) is None:
+            return
+        self.status("Reconectando em %s..." % aba.site.host)
+        aba.reconectar()
 
     # ------------------------------------------------------------------
     # Conexao

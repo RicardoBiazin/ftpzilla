@@ -88,9 +88,20 @@ class AbaSite(ttk.Frame):
 
         self.quadro_remoto = ttk.Frame(divisor)
         divisor.add(self.quadro_remoto, weight=1)
-        self.lb_espera = ttk.Label(self.quadro_remoto, style="Fraco.TLabel",
-                                   text="Conectando...")
-        self.lb_espera.pack(padx=12, pady=12, anchor="w")
+        self.quadro_espera = ttk.Frame(self.quadro_remoto, padding=12)
+        self.quadro_espera.pack(anchor="w", fill="x")
+        self.lb_espera = ttk.Label(self.quadro_espera, style="Fraco.TLabel",
+                                   text="Conectando...", wraplength=420,
+                                   justify="left")
+        self.lb_espera.pack(anchor="w")
+        # botoes so aparecem quando a conexao falha: uma aba morta sem saida
+        # obriga a fechar e recomecar do gerente de sites
+        self.quadro_botoes = ttk.Frame(self.quadro_espera)
+        ttk.Button(self.quadro_botoes, text="Tentar de novo",
+                   command=self.reconectar).pack(side="left")
+        ttk.Button(self.quadro_botoes, text="Fechar a aba",
+                   command=lambda: janela.fechar_aba(self)).pack(side="left",
+                                                                 padx=6)
         self.direita: Optional[FilePane] = None
 
         self.esquerda.ir_para(site.pasta_local
@@ -113,7 +124,8 @@ class AbaSite(ttk.Frame):
         self.worker.conectar(ok=self._conectou, erro=self._falhou)
 
     def _conectou(self, home: str) -> None:
-        self.lb_espera.pack_forget()
+        self.quadro_botoes.pack_forget()
+        self.quadro_espera.pack_forget()
         if self.direita is None:
             self.direita = FilePane(self.quadro_remoto, self.worker,
                                     titulo=self.site.nome,
@@ -162,16 +174,29 @@ class AbaSite(ttk.Frame):
                 self._reconectar()
                 return
 
-        self.lb_espera.configure(text="Nao conectou: %s" % exc)
-        self.lb_espera.pack(padx=12, pady=12, anchor="w")
+        self.lb_espera.configure(text="Nao conectou em %s:\n%s"
+                                      % (self.site.host, exc),
+                                 style="Erro.TLabel")
+        self.quadro_espera.pack(anchor="w", fill="x")
+        self.quadro_botoes.pack(anchor="w", pady=(10, 0))
         self.janela.status("Nao conectou em %s: %s" % (self.site.host, exc))
         logger.error("Falha ao conectar em %s: %s", self.site.host, exc)
 
-    def _reconectar(self) -> None:
+    def reconectar(self) -> None:
+        """Tenta de novo na mesma aba, sem perder o lugar nem a pasta local."""
+        self.quadro_botoes.pack_forget()
+        self.lb_espera.configure(style="Fraco.TLabel")
         if self.worker is not None:
             self.worker.fechar()
             self.worker = None
+        if self.direita is not None:
+            self.direita.destroy()
+            self.direita = None
+        self.quadro_espera.pack(anchor="w", fill="x")
         self.conectar()
+
+    #: nome antigo, mantido para o fluxo interno de confianca
+    _reconectar = reconectar
 
     # ------------------------------------------------------------------
     @property

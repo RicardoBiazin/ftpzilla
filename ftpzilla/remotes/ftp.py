@@ -69,7 +69,18 @@ def _traduzir(exc: Exception) -> ErroRemoto:
         if codigo == "421":
             return ErroTransitorio(str(exc))
         return ErroTransitorio(str(exc))
-    if isinstance(exc, (socket.timeout, TimeoutError, ConnectionError, OSError)):
+    if isinstance(exc, socket.gaierror):
+        # "[Errno 11001] getaddrinfo failed" nao diz nada a quem digitou o
+        # endereco errado - e esse e o caso quase sempre
+        return ErroTransitorio("servidor nao encontrado (o nome nao resolve "
+                               "no DNS); confira o endereco")
+    if isinstance(exc, ConnectionRefusedError):
+        return ErroTransitorio("conexao recusada: o servidor respondeu, mas "
+                               "nao ha nada escutando nessa porta")
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return ErroTransitorio("o servidor nao respondeu a tempo (pode ser "
+                               "firewall, ou a porta errada)")
+    if isinstance(exc, (ConnectionError, OSError)):
         return ErroTransitorio(str(exc) or type(exc).__name__)
     if isinstance(exc, ftplib.all_errors):
         texto = str(exc)

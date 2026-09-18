@@ -64,7 +64,14 @@ def _traduzir(exc: Exception) -> ErroRemoto:
                  errno.EEXIST, errno.ENOSPC):
             return ErroPermanente(str(exc))
         return ErroTransitorio(str(exc))
-    if isinstance(exc, (socket.timeout, TimeoutError, ConnectionError, OSError)):
+    if isinstance(exc, socket.gaierror):
+        return ErroTransitorio("servidor nao encontrado (o nome nao resolve "
+                               "no DNS); confira o endereco")
+    if isinstance(exc, ConnectionRefusedError):
+        return ErroTransitorio("conexao recusada: nada escutando nessa porta")
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return ErroTransitorio("o servidor nao respondeu a tempo")
+    if isinstance(exc, (ConnectionError, OSError)):
         return ErroTransitorio(str(exc) or type(exc).__name__)
     if isinstance(exc, paramiko.SSHException):
         return ErroTransitorio(str(exc))
