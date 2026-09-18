@@ -54,6 +54,7 @@ python app.py
 | `Ctrl+D` | Comparar a pasta dos dois painéis |
 | `Ctrl+F` | Procurar no servidor |
 | `F5` / `Backspace` | Atualizar / subir um nível |
+| `...` no painel local | Escolher a pasta pelo seletor do Windows |
 | `F2` / `Del` | Renomear / apagar |
 
 Opções da linha de comando:

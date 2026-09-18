@@ -17,7 +17,7 @@ As tres defesas aqui sao deliberadas:
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, Dict, List, Optional
 
 from .. import util
@@ -89,6 +89,14 @@ class FilePane(ttk.Frame):
         self.cb_caminho.bind("<Return>", lambda e: self.ir_para(self.var_caminho.get()))
         self.cb_caminho.bind("<<ComboboxSelected>>",
                              lambda e: self.ir_para(self.var_caminho.get()))
+
+        # o seletor de pastas do Windows so existe para o painel local: no
+        # servidor nao ha como o dialogo do sistema navegar, e la quem faz
+        # esse papel e a busca recursiva (Ctrl+F)
+        if getattr(self.nav.remote, "is_local", False):
+            self.bt_procurar = ttk.Button(topo, text="...", width=3,
+                                          command=self.escolher_pasta)
+            self.bt_procurar.pack(side="left", padx=(4, 0))
 
         self.bt_acima = ttk.Button(topo, text="↑", width=3, command=self.subir)
         self.bt_acima.pack(side="left", padx=(4, 0))
@@ -165,6 +173,24 @@ class FilePane(ttk.Frame):
         self.caminho = destino
         self.var_caminho.set(destino)
         self.recarregar()
+
+    def escolher_pasta(self) -> None:
+        """Abre o seletor de pastas do sistema, partindo da pasta atual.
+
+        Digitar caminho a mao e o pior jeito de achar uma pasta, e o dialogo
+        do proprio Windows ja tem busca, atalhos e unidades de rede.
+        """
+        remoto = self.nav.remote
+        inicial = ""
+        try:
+            inicial = remoto.nativo(self.caminho)
+        except Exception:       # noqa: BLE001 - so um ponto de partida
+            inicial = ""
+        escolhida = filedialog.askdirectory(
+            parent=self, title="Escolher a pasta local",
+            initialdir=inicial or None, mustexist=True)
+        if escolhida:
+            self.ir_para(escolhida)
 
     def subir(self) -> None:
         pai = self.nav.remote.pai(self.caminho)

@@ -451,6 +451,109 @@ def _clicar(notebook, ponto):
     notebook._soltou(evento)
 
 
+def teste_escolher_pasta_local():
+    """O painel local tem um botao que abre o seletor de pastas do sistema.
+
+    O dialogo e do Windows e nao da para clicar nele aqui, entao o que se
+    testa e o contrato: o botao existe so no painel local, e a pasta
+    escolhida vira navegacao.
+    """
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    import os
+    from tkinter import filedialog
+    from ftpzilla.browser import NavegadorLocal
+    from ftpzilla.remotes.local import LocalRemote
+    from ftpzilla.ui import tema
+    from ftpzilla.ui.painel import FilePane
+
+    with PastaTemp() as tmp:
+        destino = os.path.join(tmp, "uma pasta com espaco")
+        escrever(os.path.join(destino, "dentro.txt"), b"x")
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            tema.aplicar(root, "Escuro")
+            painel = FilePane(root, NavegadorLocal(LocalRemote()))
+            painel.pack()
+            painel.ir_para(tmp.replace("\\", "/"))
+            root.update()
+            checar(hasattr(painel, "bt_procurar"),
+                   "o painel local tem o botao de procurar pasta")
+
+            chamadas = {}
+            original = filedialog.askdirectory
+
+            def falso(**kwargs):
+                chamadas.update(kwargs)
+                return destino.replace("\\", "/")
+
+            filedialog.askdirectory = falso
+            try:
+                painel.escolher_pasta()
+                root.update()
+            finally:
+                filedialog.askdirectory = original
+
+            checar(tmp.replace("\\", "/") in
+                   (chamadas.get("initialdir") or "").replace("\\", "/"),
+                   "o seletor abre na pasta em que o painel esta, e nao em "
+                   "um lugar qualquer")
+            igual(painel.caminho, destino.replace("\\", "/"),
+                  "a pasta escolhida vira a pasta do painel")
+            checar(any(e.name == "dentro.txt" for e in painel._itens),
+                   "e o conteudo dela foi listado")
+
+            # cancelar o dialogo (devolve "") nao pode mexer no painel
+            filedialog.askdirectory = lambda **k: ""
+            try:
+                painel.escolher_pasta()
+            finally:
+                filedialog.askdirectory = original
+            igual(painel.caminho, destino.replace("\\", "/"),
+                  "cancelar o seletor deixa o painel onde estava")
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def teste_painel_remoto_nao_tem_seletor_do_windows():
+    """No servidor o dialogo do Windows nao serve para nada - quem faz esse
+    papel la e a busca recursiva."""
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla.browser import Navegador
+    from ftpzilla.remotes.base import Remote
+    from ftpzilla.ui import tema
+    from ftpzilla.ui.painel import FilePane
+
+    class RemotoFalso(Remote):
+        is_local = False
+
+        def listar(self, caminho):
+            return []
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        tema.aplicar(root, "Claro")
+        painel = FilePane(root, Navegador(RemotoFalso()))
+        painel.pack()
+        root.update()
+        checar(not hasattr(painel, "bt_procurar"),
+               "o painel de servidor nao mostra o seletor de pastas local")
+    finally:
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+
+
 def teste_fechar_abas():
     """Cada aba tem um X. Fechar precisa desconectar, e nunca deixar a
     janela sem aba nenhuma."""
@@ -739,6 +842,8 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_sincronizar_pela_interface,
           teste_comparacao_pinta_os_paineis,
           teste_aba_de_servidor_de_ponta_a_ponta,
+          teste_escolher_pasta_local,
+          teste_painel_remoto_nao_tem_seletor_do_windows,
           teste_fechar_abas,
           teste_abas_repetidas_ganham_numero,
           teste_testar_conexao_antes_de_salvar,
