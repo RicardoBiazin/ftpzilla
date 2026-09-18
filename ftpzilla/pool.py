@@ -135,6 +135,12 @@ class PoolConexoes:
                                (" (%s)" % motivo) if motivo else "")
             return self.maximo
 
+    def limitar(self, maximo: int) -> None:
+        """Fixa o teto de conexoes (servidor que nao aceita simultaneas)."""
+        with self._lock:
+            self.maximo = max(1, int(maximo))
+            self._lock.notify_all()
+
     def fechar_ociosas(self, idade: float = VELHA) -> None:
         with self._lock:
             manter = []
@@ -192,6 +198,9 @@ class PoolLocal:
 
     def reduzir_teto(self, motivo: str = "") -> int:
         return 1
+
+    def limitar(self, maximo: int) -> None:
+        pass
 
     def fechar_ociosas(self, idade: float = 0.0) -> None:
         pass

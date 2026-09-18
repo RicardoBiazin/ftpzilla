@@ -145,3 +145,39 @@ def tem_display() -> bool:
         return True
     except Exception:
         return False
+
+
+class capturar_log:
+    """Coleta as mensagens do logger do FTPZilla dentro do bloco.
+
+    Serve para provar que um caminho de codigo foi REALMENTE tomado. Sem
+    isso um teste passa por acidente: foi o que aconteceu com a
+    segmentacao, que nunca chegou a ser exercitada porque o limiar nao
+    estava sendo respeitado, e o teste nao tinha como perceber.
+    """
+
+    def __init__(self):
+        self.mensagens = []
+
+    def __enter__(self):
+        import logging
+        coletor = self
+
+        class _Coletor(logging.Handler):
+            def emit(self, record):
+                coletor.mensagens.append(record.getMessage())
+
+        self._handler = _Coletor()
+        self._logger = logging.getLogger("ftpzilla")
+        self._nivel = self._logger.level
+        self._logger.setLevel(logging.DEBUG)
+        self._logger.addHandler(self._handler)
+        return self
+
+    def __exit__(self, *exc):
+        self._logger.removeHandler(self._handler)
+        self._logger.setLevel(self._nivel)
+
+    def contem(self, trecho: str) -> bool:
+        return any(trecho in m for m in self.mensagens)
+

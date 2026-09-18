@@ -12,7 +12,7 @@ import time
 
 import ajuda
 import servidores
-from ajuda import PastaTemp, checar, escrever, igual, pular
+from ajuda import PastaTemp, capturar_log, checar, escrever, igual, pular
 
 from ftpzilla.fila import GerenciadorFila
 from ftpzilla.fila_store import BAIXAR, CONCLUIDO, FilaStore
@@ -188,9 +188,14 @@ def teste_fila_usa_segmentacao_quando_vale():
                                     max_global=1).abrir()
                 try:
                     d = destino.replace("\\", "/")
-                    itens = g.enfileirar(g.montar_itens(site, BAIXAR, [
-                        ("/g.bin", d + "/g.bin", len(dados), 0)]))
-                    checar(g.esperar_vazia(120), "a fila terminou")
+                    with capturar_log() as registro:
+                        itens = g.enfileirar(g.montar_itens(site, BAIXAR, [
+                            ("/g.bin", d + "/g.bin", len(dados), 0)]))
+                        checar(g.esperar_vazia(120), "a fila terminou")
+                    checar(registro.contem("conexoes paralelas"),
+                           "a fila REALMENTE escolheu o caminho segmentado "
+                           "(sem conferir isso, o teste passaria mesmo com a "
+                           "segmentacao desligada)")
                     igual(itens[0].estado, CONCLUIDO, "concluiu")
                     alvo = os.path.join(destino, "g.bin")
                     igual(_sha(alvo), hashlib.sha256(dados).hexdigest(),
@@ -251,10 +256,107 @@ def teste_retoma_segmentos():
                 pool.fechar()
 
 
+def teste_servidor_que_recusa_paralelo_nao_trava_a_fila():
+    """O caso real do ftp.datasus.gov.br: o servidor derruba qualquer
+    transferencia simultanea.
+
+    Antes desta correcao, a fila segmentava em quatro conexoes, tomava
+    'conexao derrubada', voltava para a fila, segmentava de novo - para
+    sempre, sempre em "tentativa 1 de 5", porque uma faixa avancava alguns
+    bytes e zerava o contador. O arquivo travava numa porcentagem e nunca
+    terminava.
+
+    A otimizacao nunca pode impedir a transferencia: ao ver que o servidor
+    nao aceita conexao simultanea, a fila passa a usar UMA conexao e
+    aproveita o que ja foi baixado.
+    """
+    _precisa()
+    from ftpzilla import transfer
+
+    with PastaTemp() as tmp:
+        raiz = os.path.join(tmp, "servidor")
+        dados = _conteudo(2 * MB)
+        escrever(os.path.join(raiz, "grande.bin"), dados)
+        destino = os.path.join(tmp, "baixado")
+        os.makedirs(destino, exist_ok=True)
+
+        limiar, minimo = transfer.LIMIAR_SEGMENTO, transfer.SEGMENTO_MINIMO
+        transfer.LIMIAR_SEGMENTO = 512 * 1024
+        transfer.SEGMENTO_MINIMO = 256 * 1024
+        try:
+            with servidores.servidor_ftp(raiz, uma_conexao=True) as (h, p):
+                sites = GerenteSites(os.path.join(tmp, "sites.json"))
+                site = sites.adicionar(Site(
+                    nome="teimoso", kind="ftp", host=h, porta=p,
+                    usuario=servidores.USUARIO, senha=servidores.SENHA,
+                    tls_modo="nenhum"))
+                g = GerenciadorFila(sites,
+                                    store=FilaStore(os.path.join(tmp, "f.db")),
+                                    max_global=2).abrir()
+                try:
+                    d = destino.replace("\\", "/")
+                    with capturar_log() as registro:
+                        itens = g.enfileirar(g.montar_itens(site, BAIXAR, [
+                            ("/grande.bin", d + "/grande.bin", len(dados), 0)]))
+                        checar(g.esperar_vazia(120),
+                               "a fila terminou em vez de repetir para sempre")
+                    checar(registro.contem("conexoes paralelas"),
+                           "ela tentou o caminho paralelo primeiro")
+                    checar(registro.contem("uma conexao so"),
+                           "e recuou para uma conexao quando levou o tombo")
+                    igual(itens[0].estado, CONCLUIDO, "o item concluiu")
+                    alvo = os.path.join(destino, "grande.bin")
+                    igual(_sha(alvo), hashlib.sha256(dados).hexdigest(),
+                          "e o arquivo esta integro")
+                    checar(site.id in g._sem_paralelismo,
+                           "a fila aprendeu que este servidor nao aceita "
+                           "conexao simultanea")
+                    igual(g._pools[site.id].maximo, 1,
+                          "e baixou o teto de conexoes do site para 1")
+                finally:
+                    g.fechar()
+        finally:
+            transfer.LIMIAR_SEGMENTO = limiar
+            transfer.SEGMENTO_MINIMO = minimo
+
+
+def teste_tentativas_contam_quando_nao_ha_avanco():
+    """Zerar o contador so porque 'andou alguma coisa nesta tentativa' faz o
+    item repetir para sempre quando ele empaca sempre no mesmo ponto. O que
+    vale e ter avancado em relacao a ULTIMA falha."""
+    from ftpzilla.fila import ItemFila
+
+    item = ItemFila(origem="/a", destino="b")
+    # tres falhas seguidas no mesmo ponto
+    for _ in range(3):
+        item.bytes_feitos = 1000
+        progrediu = item.bytes_feitos > item.marca_ultima_falha
+        item.marca_ultima_falha = max(item.marca_ultima_falha,
+                                      item.bytes_feitos)
+        if not progrediu:
+            item.tentativas += 1
+    igual(item.tentativas, 2,
+          "parado no mesmo byte: as tentativas contam e o item vai desistir")
+
+    # agora avancando de verdade a cada queda
+    item2 = ItemFila(origem="/a", destino="b")
+    for n in (1000, 2000, 3000):
+        item2.bytes_feitos = n
+        progrediu = item2.bytes_feitos > item2.marca_ultima_falha
+        item2.marca_ultima_falha = max(item2.marca_ultima_falha,
+                                       item2.bytes_feitos)
+        item2.tentativas = 0 if progrediu else item2.tentativas + 1
+    igual(item2.tentativas, 0,
+          "avancando a cada queda, o contador zera e a transferencia "
+          "sobrevive a um link ruim")
+
+
 TESTES = [teste_quando_segmentar, teste_quando_nao_segmentar,
           teste_numero_de_segmentos_respeita_o_pool,
           teste_monta_o_arquivo_na_ordem_certa,
-          teste_fila_usa_segmentacao_quando_vale, teste_retoma_segmentos]
+          teste_fila_usa_segmentacao_quando_vale, teste_retoma_segmentos,
+          teste_servidor_que_recusa_paralelo_nao_trava_a_fila,
+          teste_tentativas_contam_quando_nao_ha_avanco]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Download segmentado"))

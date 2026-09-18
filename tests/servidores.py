@@ -81,7 +81,8 @@ def cert_autoassinado(pasta: str) -> str:
 @contextlib.contextmanager
 def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
                  sem_rest: bool = False, sem_mlsd: bool = False,
-                 cortar_em: int = 0, cortes: int = 0, certificado: str = ""):
+                 cortar_em: int = 0, cortes: int = 0, uma_conexao: bool = False,
+                 certificado: str = ""):
     """Sobe um servidor FTP sobre 'raiz'. Devolve (host, porta).
 
     cortar_em > 0 faz a leitura de qualquer arquivo falhar depois de N bytes,
@@ -91,6 +92,11 @@ def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
     cortes limita quantas vezes isso acontece (0 = sempre). Com cortes=1, a
     primeira tentativa cai e a segunda tem de terminar o arquivo - que e o
     cenario real de "a conexao caiu uma vez".
+
+    uma_conexao imita o servidor que derruba QUALQUER transferencia
+    simultanea - comportamento real do ftp.datasus.gov.br, e o cenario em
+    que o download em varias conexoes, em vez de acelerar, impede a
+    transferencia.
     """
     from pyftpdlib.authorizers import DummyAuthorizer
     from pyftpdlib.filesystems import AbstractedFS
@@ -115,6 +121,33 @@ def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
             return getattr(self._f, nome)
 
     restantes = {"cortes": cortes if cortes else -1}
+    #: quantas leituras estao acontecendo agora, para imitar o servidor que
+    #: so tolera uma de cada vez
+    ativos = {"n": 0}
+    trava = threading.Lock()
+
+    class _Exclusivo:
+        """Morre se outra transferencia ja estiver acontecendo."""
+
+        def __init__(self, fobj):
+            self._f = fobj
+            with trava:
+                ativos["n"] += 1
+                self._sozinho = ativos["n"] == 1
+
+        def read(self, n=-1):
+            if not self._sozinho:
+                raise OSError("conexao derrubada: o servidor so aceita uma "
+                              "transferencia por vez (teste)")
+            return self._f.read(n)
+
+        def close(self):
+            with trava:
+                ativos["n"] = max(0, ativos["n"] - 1)
+            return self._f.close()
+
+        def __getattr__(self, nome):
+            return getattr(self._f, nome)
 
     class FS(AbstractedFS):
         def open(self, filename, mode):
@@ -123,6 +156,8 @@ def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
                 if restantes["cortes"] > 0:
                     restantes["cortes"] -= 1
                 return _Cortado(f, cortar_em)
+            if uma_conexao and "r" in mode:
+                return _Exclusivo(f)
             return f
 
     if tls:

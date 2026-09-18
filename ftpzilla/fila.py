@@ -69,6 +69,10 @@ class ItemFila:
     cancelar: Optional[threading.Event] = field(default=None, repr=False,
                                                 compare=False)
     offset_inicial: int = field(default=0, repr=False, compare=False)
+    #: quanto ja estava feito na falha anterior - ver a regra de tentativas
+    marca_ultima_falha: int = field(default=0, repr=False, compare=False)
+    #: a tentativa atual usou varias conexoes?
+    segmentado: bool = field(default=False, repr=False, compare=False)
 
     @property
     def nome(self) -> str:
@@ -133,6 +137,9 @@ class GerenciadorFila:
         self._acordar = threading.Event()
         self._pausada = False
         self._sites_pausados = set()
+        # sites que ja mostraram nao aguentar conexao simultanea: o servidor
+        # derruba a segunda. Descoberto na pratica, nao configurado.
+        self._sem_paralelismo = set()
         self._rodando = 0
 
     # ------------------------------------------------------------------
@@ -463,6 +470,7 @@ class GerenciadorFila:
         pool = self._pool_do(item)
         remoto = None
         suja = False
+        item.segmentado = False
         try:
             remoto = pool.pegar()
             plano = self._plano_segmentado(item, pool, remoto)
@@ -472,13 +480,19 @@ class GerenciadorFila:
                 # seja devolvida duas vezes se algo falhar la dentro
                 pool.devolver(remoto)
                 remoto = None
-                faixas, feitos = plano
-                logger.info("Baixando %s em %d conexoes paralelas.",
-                            item.nome, len(faixas))
+                faixas, feitos, paralelas = plano
+                item.segmentado = paralelas > 1
+                if paralelas > 1:
+                    logger.info("Baixando %s em %d conexoes paralelas.",
+                                item.nome, len(faixas))
+                else:
+                    logger.info("Continuando %s numa conexao so, em %d "
+                                "faixas.", item.nome, len(faixas))
                 transfer.baixar_segmentado(
                     item, pool, faixas, medidor=item.medidor,
                     cancelar=item.cancelar, store=self.store,
-                    limitador=self.limitador, feitos=feitos)
+                    limitador=self.limitador, feitos=feitos,
+                    paralelas=paralelas)
                 self._terminou(item)
                 return
             local = LocalRemote()
@@ -518,6 +532,19 @@ class GerenciadorFila:
             item.tamanho = tamanho
         with self._lock:
             esperando = sum(1 for i in self.itens if i.estado == ESPERANDO)
+        if item.site_id in self._sem_paralelismo:
+            # o servidor ja derrubou conexao simultanea antes. Se houver
+            # segmentos do que ja foi baixado, continuar de onde parou - com
+            # UMA conexao de cada vez; senao, nem segmentar.
+            gravados = self.store.segmentos(item.id)
+            if not gravados:
+                return None
+            faixas = [(g["ini"], g["fim"]) for g in gravados]
+            feitos = self._segmentos_reaproveitaveis(item, faixas, tamanho)
+            if feitos is None:
+                return None
+            return faixas, feitos, 1
+
         faixas = transfer.plano_segmentos(tamanho, remoto,
                                           livres=pool.livres,
                                           esperando=esperando)
@@ -528,7 +555,7 @@ class GerenciadorFila:
         if feitos is None:
             self.store.gravar_segmentos(item.id, faixas)
             feitos = [0] * len(faixas)
-        return faixas, feitos
+        return faixas, feitos, len(faixas)
 
     def _segmentos_reaproveitaveis(self, item: ItemFila, faixas, tamanho: int):
         """O que ja foi baixado de cada faixa numa tentativa anterior.
@@ -574,10 +601,17 @@ class GerenciadorFila:
         mensagem = transfer.descrever_erro(exc)
         with self._lock:
             self.global_medidor.desistir(item.id)
-            progrediu = (item.medidor is not None and item.medidor.feitos > 0)
+            # "andou nesta tentativa" nao basta: com o download em faixas,
+            # uma faixa avanca alguns bytes e outra morre SEMPRE no mesmo
+            # ponto, o contador zerava toda vez e o item repetia para sempre
+            # sem nunca passar de onde estava. O que vale e ter avancado em
+            # relacao a ULTIMA falha.
+            progrediu = item.bytes_feitos > item.marca_ultima_falha
+            item.marca_ultima_falha = max(item.marca_ultima_falha,
+                                          item.bytes_feitos)
             if progrediu:
-                # a transferencia andou antes de cair: nao consumir tentativa,
-                # senao um arquivo grande em link instavel morre por contagem
+                # um arquivo grande em link instavel cai varias vezes e ainda
+                # assim chega ao fim; nao pode morrer por contagem
                 item.tentativas = 0
 
             if tipo == transfer.AUTENTICACAO:
@@ -612,6 +646,26 @@ class GerenciadorFila:
                 pool = self._pools.get(item.site_id)
                 if pool is not None:
                     pool.reduzir_teto("421 do servidor")
+
+            if item.segmentado and tipo == transfer.TRANSITORIO and \
+                    item.site_id not in self._sem_paralelismo:
+                # a otimizacao nunca pode impedir a transferencia: se o
+                # servidor derruba conexao simultanea, desiste do paralelo
+                # para este site e continua com uma conexao so, aproveitando
+                # o que ja foi baixado
+                self._sem_paralelismo.add(item.site_id)
+                pool = self._pools.get(item.site_id)
+                if pool is not None:
+                    pool.limitar(1)
+                    # as conexoes abertas na tentativa paralela continuariam
+                    # guardadas e voltariam a ser usadas duas a duas na
+                    # proxima faixa; fechar agora e o que faz o recuo valer
+                    # ja na tentativa seguinte
+                    pool.fechar_ociosas(0)
+                logger.warning(
+                    "%s derrubou as conexoes simultaneas. Continuando com "
+                    "uma conexao so, a partir do que ja foi baixado.",
+                    item.site_nome or item.site_id)
 
     # ------------------------------------------------------------------
     # Apoio

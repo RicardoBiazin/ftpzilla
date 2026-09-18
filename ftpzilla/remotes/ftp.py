@@ -45,6 +45,11 @@ TIMEOUT = 30
 PORTA = 21
 PORTA_IMPLICITA = 990
 
+#: servidores cujas limitacoes ja foram anunciadas nesta sessao. Sem isto, o
+#: log repete "nao aceita MFMT" a cada conexao nova - e um download em quatro
+#: faixas abre quatro - escondendo o que interessa.
+_JA_AVISADO = set()
+
 #: respostas que nao adianta repetir
 _PERMANENTES = ("530", "550", "552", "553")
 #: respostas que pedem nova tentativa
@@ -391,12 +396,15 @@ class FtpRemote(Remote):
         self.preserva_mtime = self.tem_mfmt
         self.pode_chmod = self.tem_chmod
 
-        if self._feat and not tem_rest:
-            logger.info("O servidor nao anuncia REST: transferencia "
-                        "interrompida tera de recomecar do zero.")
-        if self._feat and not self.tem_mfmt:
-            logger.info("O servidor nao aceita MFMT: a data dos arquivos "
-                        "enviados nao sera preservada.")
+        chave = (getattr(self.site, "host", ""), tem_rest, self.tem_mfmt)
+        if self._feat and chave not in _JA_AVISADO:
+            _JA_AVISADO.add(chave)
+            if not tem_rest:
+                logger.info("O servidor nao anuncia REST: transferencia "
+                            "interrompida tera de recomecar do zero.")
+            if not self.tem_mfmt:
+                logger.info("O servidor nao aceita MFMT: a data dos arquivos "
+                            "enviados nao sera preservada.")
 
     def viva(self) -> bool:
         if not self._conectado or self.ftp is None:

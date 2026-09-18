@@ -403,8 +403,7 @@ MAX_SEGMENTOS = 4
 
 def plano_segmentos(tamanho: int, remote: Remote, *, livres: int = 0,
                     esperando: int = 0, destino_local: bool = True,
-                    limiar: int = LIMIAR_SEGMENTO,
-                    maximo: int = MAX_SEGMENTOS) -> list:
+                    limiar: int = None, maximo: int = None) -> list:
     """Divide (ou nao) um download em faixas paralelas.
 
     Segmentar e a diferenca entre usar 20% e 100% do link em servidor que
@@ -426,6 +425,13 @@ def plano_segmentos(tamanho: int, remote: Remote, *, livres: int = 0,
 
     Devolve [] quando nao vale a pena, ou a lista de (inicio, fim) inclusivo.
     """
+    # os limites sao lidos AQUI, e nao no valor padrao do parametro: valor
+    # padrao e calculado uma vez, quando o modulo carrega, e ficaria surdo a
+    # qualquer ajuste posterior - inclusive ao dos testes, que por causa
+    # disso passaram a achar que estavam exercitando a segmentacao sem
+    # estar
+    limiar = LIMIAR_SEGMENTO if limiar is None else limiar
+    maximo = MAX_SEGMENTOS if maximo is None else maximo
     if tamanho < limiar:
         return []
     if not getattr(remote, "segmentavel", False):
@@ -455,7 +461,8 @@ def plano_segmentos(tamanho: int, remote: Remote, *, livres: int = 0,
 
 
 def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
-                      store=None, limitador=None, feitos=None) -> Resultado:
+                      store=None, limitador=None, feitos=None,
+                      paralelas=None) -> Resultado:
     """Baixa um arquivo em varias conexoes, cada uma com sua faixa.
 
     O arquivo local e pre-alocado com o tamanho final e cada thread escreve
@@ -465,6 +472,11 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
     'feitos' e o quanto de cada faixa ja foi baixado numa tentativa anterior
     (vem da tabela de segmentos), que e o que permite retomar um download
     segmentado sem recomecar as quatro faixas.
+
+    'paralelas' limita quantas faixas correm ao mesmo tempo. Com 1, as
+    faixas sao baixadas em fila, uma conexao de cada vez - e assim que se
+    aproveita o que ja foi baixado em servidor que nao suporta conexao
+    simultanea, em vez de jogar fora e recomecar.
     """
     local = LocalRemote()
     alvo = local.nativo(item.destino)
@@ -519,7 +531,8 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
             if remoto is not None:
                 pool.devolver(remoto, suja=suja)
 
-    with ThreadPoolExecutor(max_workers=len(faixas),
+    trabalhadores = max(1, min(paralelas or len(faixas), len(faixas)))
+    with ThreadPoolExecutor(max_workers=trabalhadores,
                             thread_name_prefix="segmento") as executor:
         list(executor.map(um_segmento, range(len(faixas))))
 
@@ -606,6 +619,10 @@ def conferir_integridade(origem: Remote, caminho_remoto: str,
 
 
 def descrever_erro(exc: BaseException) -> str:
-    """Mensagem curta para a coluna de erro da fila."""
-    texto = str(exc).strip() or type(exc).__name__
+    """Mensagem curta, de uma linha so, para a coluna de erro da fila.
+
+    As mensagens de erro do Windows vem com quebras de linha no meio; numa
+    celula de tabela isso vira um texto cortado que nao se entende.
+    """
+    texto = " ".join(str(exc).split()) or type(exc).__name__
     return texto if len(texto) <= 160 else texto[:157] + "..."

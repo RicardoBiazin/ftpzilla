@@ -107,6 +107,8 @@ Fora desse caso não ajuda, e pode atrapalhar. Por isso só segmenta quando toda
 
 Medindo em rede local ou contra `localhost` você **não vai ver diferença** — não há o que contornar ali.
 
+E, principalmente: **a otimização nunca pode impedir a transferência**. Muitos servidores derrubam qualquer conexão simultânea (o `ftp.datasus.gov.br` é um deles). Quando isso acontece, o FTPZilla percebe pelo tipo de queda, desiste do paralelismo para aquele servidor e **continua com uma conexão só, a partir do que já tinha baixado** — em vez de ficar repetindo a mesma tentativa para sempre.
+
 ### Comparar e sincronizar
 
 `Ctrl+D` pinta os dois painéis. O diálogo de sincronização analisa a árvore, mostra linha por linha o que vai acontecer e só executa o que estiver marcado — sincronização apaga arquivo, e nada acontece antes de você ver a lista.
