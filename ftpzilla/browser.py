@@ -153,22 +153,29 @@ class BrowserWorker(Navegador):
             pass          # a janela ja foi fechada
 
     def _laco(self) -> None:
-        while not self._parar.is_set():
-            cmd = self._fila.get()
-            if cmd is None:
-                break
+        try:
+            while not self._parar.is_set():
+                cmd = self._fila.get()
+                if cmd is None:
+                    break
+                try:
+                    resultado = cmd.funcao()
+                except Cancelado:
+                    continue
+                except Exception as e:           # noqa: BLE001 - vai inteiro para a GUI
+                    logger.warning("%s", e)
+                    self._devolver(cmd.erro, e)
+                    continue
+                if cmd.geracao is not None:
+                    self._devolver(cmd.ok, resultado, cmd.geracao)
+                else:
+                    self._devolver(cmd.ok, resultado)
+        finally:
+            # o fechamento acontece nesta thread, depois do ultimo comando
             try:
-                resultado = cmd.funcao()
-            except Cancelado:
-                continue
-            except Exception as e:           # noqa: BLE001 - vai inteiro para a GUI
-                logger.warning("%s", e)
-                self._devolver(cmd.erro, e)
-                continue
-            if cmd.geracao is not None:
-                self._devolver(cmd.ok, resultado, cmd.geracao)
-            else:
-                self._devolver(cmd.ok, resultado)
+                self.remote.fechar()
+            except Exception:
+                pass
 
     def _enviar(self, funcao, ok, erro, geracao=None) -> None:
         self._fila.put(_Comando(funcao, ok, erro, geracao))
@@ -211,12 +218,11 @@ class BrowserWorker(Navegador):
 
     # --- fim --------------------------------------------------------------
     def fechar(self) -> None:
+        # chamado na thread do Tk: NAO pode tocar na conexao aqui. remote.fechar()
+        # faz QUIT na rede (ate 30 s num servidor parado) e disputaria o socket
+        # com um comando ainda em curso. Quem fecha e o proprio laco, ao sair.
         self._parar.set()
         self._fila.put(None)
-        try:
-            self.remote.fechar()
-        except Exception:
-            pass
 
 
 def entradas_ordenadas(itens: List[Entry], coluna: str = "nome",

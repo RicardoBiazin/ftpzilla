@@ -518,15 +518,24 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
         restante = (fim - ini + 1) - ja
         if restante <= 0:
             return
+        nome_faixa = "%s: faixa %d/%d" % (item.nome, indice + 1, len(faixas))
+        contador = [ja]
+        primeiro = [True]
+        inicio_faixa = time.time()
+        logger.info("%s iniciando: bytes %d a %d, faltam %s.", nome_faixa,
+                    ini + ja, fim, _humano(restante))
         remoto = None
         suja = False
         try:
             remoto = pool.pegar()
             with open(parcial, "r+b") as f:
                 f.seek(ini + ja)
-                contador = [ja]
 
                 def cb(n: int) -> None:
+                    if primeiro[0]:
+                        primeiro[0] = False
+                        logger.info("%s recebeu o primeiro bloco em %.1fs.",
+                                    nome_faixa, time.time() - inicio_faixa)
                     if limitador is not None:
                         limitador.consumir(n)
                     if medidor is not None:
@@ -540,8 +549,14 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
                 with travas:
                     feitos[indice] = contador[0]
             suja = True     # leitura por faixa sempre deixa a conexao suja
+            logger.info("%s terminou: %s em %.1fs.", nome_faixa,
+                        _humano(contador[0] - ja),
+                        time.time() - inicio_faixa)
         except BaseException as e:      # noqa: BLE001
             suja = True
+            logger.warning("%s parou depois de %s em %.1fs: %s", nome_faixa,
+                           _humano(contador[0] - ja),
+                           time.time() - inicio_faixa, descrever_erro(e))
             with travas:
                 erros.append(e)
         finally:

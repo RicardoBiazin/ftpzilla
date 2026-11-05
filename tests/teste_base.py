@@ -121,9 +121,39 @@ def teste_formatacao():
     checar("..." in util.elidir("a" * 100, 20), "caminho longo e cortado")
 
 
+def teste_fechar_aba_nao_bloqueia():
+    """Fechar a aba volta na hora; o QUIT roda na thread do worker.
+
+    Antes, BrowserWorker.fechar() chamava remote.fechar() na thread do Tk.
+    Com o servidor parado, o QUIT esperava ate 30 s e a janela travava como
+    'nao esta respondendo'.
+    """
+    import threading
+    import time
+    from ftpzilla.browser import BrowserWorker
+    from ftpzilla.remotes.local import LocalRemote
+
+    quem = []
+
+    class Lento(LocalRemote):
+        def fechar(self):
+            quem.append(threading.current_thread().name)
+            time.sleep(1.5)
+
+    w = BrowserWorker(Lento(), lambda ms, f: f(), nome="teste-fechar")
+    inicio = time.time()
+    w.fechar()
+    gasto = time.time() - inicio
+    checar(gasto < 0.5, "fechar() volta na hora (%.2fs)" % gasto)
+    time.sleep(2.5)
+    igual(quem, ["teste-fechar"],
+          "o fechamento roda na thread do worker, nao na chamadora")
+
+
 TESTES = [teste_registro, teste_requisitos_ausentes, teste_campos_secretos,
           teste_caminhos, teste_capacidades_sao_da_instancia,
-          teste_metodos_obrigatorios, teste_ordenacao, teste_formatacao]
+          teste_metodos_obrigatorios, teste_ordenacao, teste_formatacao,
+          teste_fechar_aba_nao_bloqueia]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Contratos da abstracao"))
