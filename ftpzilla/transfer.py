@@ -502,9 +502,13 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
     total = faixas[-1][1] + 1
 
     os.makedirs(os.path.dirname(alvo) or ".", exist_ok=True)
-    # pre-aloca: cada thread escreve na propria faixa sem esperar as outras
-    with open(parcial, "r+b" if os.path.exists(parcial) else "wb") as f:
-        f.truncate(total)
+    # NAO pre-alocar com truncate(total): no compartilhamento de rede (SMB) o
+    # truncate grava zeros de verdade - ~700 MB a 0,7 MB/s, sem um byte do
+    # arquivo chegando e sem nenhuma faixa iniciada. Cada faixa grava no
+    # proprio deslocamento e o arquivo cresce sozinho ate o tamanho final.
+    # Sem nada para retomar, o parcial comeca vazio.
+    modo = "r+b" if sum(feitos) > 0 and os.path.exists(parcial) else "wb"
+    open(parcial, modo).close()
 
     if medidor is not None:
         medidor.comecar(total=total, feitos=sum(feitos))
@@ -548,6 +552,14 @@ def baixar_segmentado(item, pool, faixas, *, medidor=None, cancelar=None,
                               limite=restante, cb=cb, cancelar=cancelar)
                 with travas:
                     feitos[indice] = contador[0]
+            # o servidor que fecha o canal de dados no meio NAO gera erro na
+            # leitura: o FTP so ve o fim dos dados. Sem esta conferencia a
+            # faixa ficaria com um buraco e so o hash (quando existe) pegaria
+            if contador[0] - ja < restante:
+                raise ErroTransitorio(
+                    "a faixa %d veio curta: %s de %s"
+                    % (indice + 1, _humano(contador[0] - ja),
+                       _humano(restante)))
             suja = True     # leitura por faixa sempre deixa a conexao suja
             logger.info("%s terminou: %s em %.1fs.", nome_faixa,
                         _humano(contador[0] - ja),

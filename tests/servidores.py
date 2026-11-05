@@ -134,6 +134,11 @@ def servidor_ftp(raiz: str, tls: bool = False, sem_mfmt: bool = False,
             with trava:
                 ativos["n"] += 1
                 self._sozinho = ativos["n"] == 1
+            # segura a transferencia aberta um pouco: sem isso, as faixas
+            # podiam correr uma depois da outra e nunca se sobrepor, e o
+            # servidor "que recusa paralelo" deixava de recusar - o teste
+            # passava ou falhava conforme a sorte do agendamento das threads
+            time.sleep(0.15)
 
         def read(self, n=-1):
             if not self._sozinho:

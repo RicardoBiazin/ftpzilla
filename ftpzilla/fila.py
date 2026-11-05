@@ -566,7 +566,13 @@ class GerenciadorFila:
         """
         from .remotes.local import PARCIAL
         parcial = LocalRemote().nativo(item.destino) + PARCIAL
-        if not os.path.exists(parcial) or os.path.getsize(parcial) != tamanho:
+        if not os.path.exists(parcial):
+            return None
+        # o parcial cresce conforme as faixas gravam: nunca passa do tamanho
+        # final, e cada faixa ja baixada precisa estar dentro do arquivo.
+        # Nao se exige tamanho exato: nao ha pre-alocacao (ver transfer.py).
+        tamanho_parcial = os.path.getsize(parcial)
+        if tamanho_parcial > tamanho:
             return None
         gravados = self.store.segmentos(item.id)
         if len(gravados) != len(faixas):
@@ -575,6 +581,8 @@ class GerenciadorFila:
             if g["ini"] != ini or g["fim"] != fim:
                 return None
             if not (0 <= g["feito"] <= fim - ini + 1):
+                return None
+            if g["feito"] and ini + g["feito"] > tamanho_parcial:
                 return None
         return [g["feito"] for g in gravados]
 
