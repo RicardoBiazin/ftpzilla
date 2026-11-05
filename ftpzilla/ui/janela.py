@@ -12,8 +12,10 @@ pasta local em que voce estava trabalhando com ele.
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -34,6 +36,8 @@ from .fila_view import FilaView
 from .sincronizar import SincronizarDialog, comparar_nos_paineis
 
 TITULO = "FTPZilla %s" % __version__
+#: quanto a janela espera a fila encerrar antes de fechar mesmo assim
+ENCERRAR_ESPERA = 5.0
 
 
 class FilaDeLog(logging.Handler):
@@ -851,15 +855,31 @@ class JanelaPrincipal(ttk.Frame):
             self.editor.fechar()
         except Exception:
             pass
-        try:
-            # fecha a fila ANTES da janela: as threads precisam gravar o
-            # progresso no banco, e e isso que permite retomar depois
-            self.fila.fechar()
-        except Exception:
-            pass
+        # fecha a fila ANTES da janela: as threads precisam gravar o progresso
+        # no banco, e e isso que permite retomar depois. Mas o fechamento
+        # espera as transferencias em curso, e uma delas pode estar presa num
+        # servidor ou num compartilhamento parado: entao roda em outra thread
+        # e a janela continua bombeando eventos (senao o Windows a marca como
+        # "nao esta respondendo") por no maximo ENCERRAR_ESPERA segundos.
+        self._encerramento = threading.Thread(target=self._fechar_fila,
+                                              name="encerrar-fila", daemon=True)
+        self._encerramento.start()
+        limite = time.time() + ENCERRAR_ESPERA
+        while self._encerramento.is_alive() and time.time() < limite:
+            try:
+                self.root.update()
+            except tk.TclError:
+                break
+            time.sleep(0.05)
         try:
             self.root.destroy()
         except tk.TclError:
+            pass
+
+    def _fechar_fila(self) -> None:
+        try:
+            self.fila.fechar()
+        except Exception:
             pass
 
 
@@ -867,5 +887,11 @@ def abrir(tema_nome: str = tema.PADRAO) -> None:
     # a raiz precisa ser decidida antes de qualquer widget existir: o
     # tkinterdnd2 exige a classe dele na propria raiz
     root = dnd.criar_raiz()
-    JanelaPrincipal(root, tema_nome)
+    janela = JanelaPrincipal(root, tema_nome)
     root.mainloop()
+    # transferencia presa no servidor segura o processo vivo (as threads do
+    # pool nao sao daemon). Se a fila nao encerrou no prazo, sai mesmo assim:
+    # o estado da fila ja esta no banco e a retomada valida o parcial
+    enc = getattr(janela, "_encerramento", None)
+    if enc is not None and enc.is_alive():
+        os._exit(0)

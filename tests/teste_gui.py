@@ -952,6 +952,47 @@ def teste_senha_protegida_nao_aparece_no_formulario():
             pass
 
 
+def teste_fechar_com_fila_presa():
+    """Fechar a janela nao pode ficar parado esperando transferencia presa.
+
+    A fila fecha as threads de transferencia; se uma esta presa num servidor
+    ou compartilhamento parado, a janela continuava 'nao esta respondendo'.
+    O fechamento tem que sair no prazo mesmo com a fila travada.
+    """
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla.ui import janela as janela_mod
+    from ftpzilla.ui.janela import JanelaPrincipal
+    import time as _t
+    with PastaTemp():
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            root.update()
+            j.fila.fechar = lambda: _t.sleep(20)
+            inicio = _t.time()
+            j.fechar()
+            gasto = _t.time() - inicio
+            checar(gasto < janela_mod.ENCERRAR_ESPERA + 2,
+                   "fechar sai no prazo mesmo com a fila presa (%.1fs)" % gasto)
+            checar(not _existe(root), "a janela foi destruida")
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
+def _existe(root) -> bool:
+    try:
+        root.winfo_exists()
+        return True
+    except Exception:
+        return False
+
+
 TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_janela_monta, teste_treeview_grande,
           teste_menu_contexto_seleciona_item_sob_cursor,
@@ -967,7 +1008,8 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_abas_repetidas_ganham_numero,
           teste_testar_conexao_antes_de_salvar,
           teste_formulario_vem_do_registro,
-          teste_senha_protegida_nao_aparece_no_formulario]
+          teste_senha_protegida_nao_aparece_no_formulario,
+          teste_fechar_com_fila_presa]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Fumaca da interface"))
