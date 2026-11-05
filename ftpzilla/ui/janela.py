@@ -447,6 +447,9 @@ class JanelaPrincipal(ttk.Frame):
         self.fila_view = FilaView(self.quadro_fila, self.fila,
                                   ao_status=self.status)
         self.fila_view.pack(fill="both", expand=True)
+        # a fila ja vem do banco com itens: sem isto a lista so apareceria
+        # depois da primeira acao (o aviso ao_mudar nao dispara na abertura)
+        self.fila_view.marcar_sujo()
         self.after(250, self._tick_fila)
 
     # --- acoes que os paineis oferecem ------------------------------------

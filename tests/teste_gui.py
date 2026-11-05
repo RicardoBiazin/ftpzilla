@@ -993,6 +993,44 @@ def _existe(root) -> bool:
         return False
 
 
+def teste_fila_aparece_ao_abrir_com_itens_no_banco():
+    """Itens que ja estao no banco aparecem na lista logo ao abrir o programa.
+
+    Antes, a fila so era desenhada depois da primeira acao: ao reabrir, a
+    lista ficava vazia com "3 concluido(s)" no rodape.
+    """
+    if not tem_display():
+        pular("sem display grafico")
+    tk = _tk()
+    from ftpzilla import paths
+    from ftpzilla.fila_store import FilaStore, BAIXAR
+    from ftpzilla.ui.janela import JanelaPrincipal
+    import time as _t
+    with PastaTemp():
+        store = FilaStore(paths.arquivo_fila()).abrir()
+        store.inserir([{"grupo": "g1", "site_id": "s", "site_nome": "CNES",
+                        "sentido": BAIXAR, "origem": "/a.zip",
+                        "destino": "C:/x/a.zip", "tamanho": 10,
+                        "estado": "pausado", "prioridade": 1.0}])
+        store.fechar()
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            j = JanelaPrincipal(root)
+            prazo = _t.time() + 3
+            while _t.time() < prazo and not j.fila_view.tree.get_children():
+                root.update()
+                _t.sleep(0.05)
+            igual(len(j.fila_view.tree.get_children()), 1,
+                  "o item do banco aparece na lista sem nenhuma acao")
+            j.fechar()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+
 TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_janela_monta, teste_treeview_grande,
           teste_menu_contexto_seleciona_item_sob_cursor,
@@ -1009,7 +1047,8 @@ TESTES = [teste_tem_display, teste_temas, teste_icones_sobrevivem_ao_gc,
           teste_testar_conexao_antes_de_salvar,
           teste_formulario_vem_do_registro,
           teste_senha_protegida_nao_aparece_no_formulario,
-          teste_fechar_com_fila_presa]
+          teste_fechar_com_fila_presa,
+          teste_fila_aparece_ao_abrir_com_itens_no_banco]
 
 if __name__ == "__main__":
     raise SystemExit(ajuda.rodar(TESTES, "Fumaca da interface"))
