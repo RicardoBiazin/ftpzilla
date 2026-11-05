@@ -40,6 +40,15 @@ def _traduzir(exc: Exception) -> ErroRemoto:
     return ErroPermanente(str(exc))
 
 
+def _acesso(caminho: str, info) -> str:
+    """Texto de acesso para a coluna. No Windows nao existem permissoes POSIX:
+    o Python devolve 777/666 simulado, que nao quer dizer nada. Entao mostra
+    se o item pode ser gravado. Em Linux/macOS, o modo octal de sempre."""
+    if WINDOWS:
+        return "Gravar" if os.access(caminho, os.W_OK) else "Só leitura"
+    return oct(statmod.S_IMODE(info.st_mode))[2:].rjust(3, "0")
+
+
 class LocalRemote(Remote):
     kind = "local"
     rotulo = "Disco local"
@@ -157,7 +166,7 @@ class LocalRemote(Remote):
             is_dir=eh_dir,
             size=0 if eh_dir else info.st_size,
             mtime=float(info.st_mtime),
-            perms=oct(statmod.S_IMODE(info.st_mode))[2:].rjust(3, "0"),
+            perms=_acesso(de.path, info),
             is_link=eh_link,
         )
 
@@ -176,7 +185,7 @@ class LocalRemote(Remote):
             is_dir=eh_dir,
             size=0 if eh_dir else info.st_size,
             mtime=float(info.st_mtime),
-            perms=oct(statmod.S_IMODE(info.st_mode))[2:].rjust(3, "0"),
+            perms=_acesso(alvo, info),
             is_link=os.path.islink(alvo),
         )
 

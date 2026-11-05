@@ -33,7 +33,7 @@ COLUNAS = (
     ("tamanho", "Tamanho", 90, "e"),
     ("tipo", "Tipo", 70, "w"),
     ("modificado", "Modificado", 130, "w"),
-    ("permissoes", "Perm.", 70, "w"),
+    ("permissoes", "Acesso", 90, "w"),
 )
 
 
